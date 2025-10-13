@@ -168,7 +168,7 @@ MonoBehaviour:
   debugDrawActive: 1
   debugColor: {r: 1, g: 0, b: 1, a: 1}
   debugCircleSegments: 16
-  debugLogHits: 0
+  debugLogHits: 1
   requireHurtbox: 1
   targetLayers:
     serializedVersion: 2
@@ -184,8 +184,9 @@ GameObject:
   - component: {fileID: 2024391606354522096}
   - component: {fileID: 7628075138485072129}
   - component: {fileID: 687675567055685414}
-  - component: {fileID: 7830023713737215416}
+  - component: {fileID: 3641076242228654476}
   - component: {fileID: 5260541550307370074}
+  - component: {fileID: 2113058265061569544}
   - component: {fileID: 172152986153192707}
   - component: {fileID: 5943592176016338358}
   - component: {fileID: 7755899389646713349}
@@ -193,6 +194,8 @@ GameObject:
   - component: {fileID: 8365399446425716068}
   - component: {fileID: 3619025646932499659}
   - component: {fileID: 1601226016551086471}
+  - component: {fileID: 4251776492109054556}
+  - component: {fileID: 8253046577569505593}
   m_Layer: 0
   m_Name: Player
   m_TagString: Player
@@ -209,7 +212,7 @@ Transform:
   m_GameObject: {fileID: 8171198303131499827}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -9.86, y: -3.2, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -276,10 +279,10 @@ CapsuleCollider2D:
   m_IsTrigger: 1
   m_UsedByEffector: 0
   m_UsedByComposite: 0
-  m_Offset: {x: 0, y: 0}
-  m_Size: {x: 0.0001, y: 0.93}
+  m_Offset: {x: -0.0326581, y: 0}
+  m_Size: {x: 1.1936696, y: 1.1936696}
   m_Direction: 0
---- !u!114 &7830023713737215416
+--- !u!114 &3641076242228654476
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -288,15 +291,18 @@ MonoBehaviour:
   m_GameObject: {fileID: 8171198303131499827}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d4013b5fcb2cd0a48b3a9f0fdd33fb0a, type: 3}
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  moveSpeed: 6
-  dashSpeed: 12
-  dashCooldown: 1.2
-  dashDuration: 0.15
-  animator: {fileID: 7755899389646713349}
-  inputEnabled: 1
+  GlobalObjectIdHash: 3911641887
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
 --- !u!114 &5260541550307370074
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -309,10 +315,43 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fedce90b03c9188469f9425b67ff90ad, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  maxHearts: 5
-  hearts: 5
+  maxHearts:
+    m_InternalValue: 5
+  hearts:
+    m_InternalValue: 5
   invincible: 0
   invincibleFlashInterval: 0.1
+--- !u!114 &2113058265061569544
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8171198303131499827}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e96cb6065543e43c4a752faaa1468eb1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  UseUnreliableDeltas: 0
+  SyncPositionX: 1
+  SyncPositionY: 1
+  SyncPositionZ: 0
+  SyncRotAngleX: 0
+  SyncRotAngleY: 1
+  SyncRotAngleZ: 1
+  SyncScaleX: 1
+  SyncScaleY: 0
+  SyncScaleZ: 0
+  PositionThreshold: 0.001
+  RotAngleThreshold: 0.01
+  ScaleThreshold: 0.01
+  UseQuaternionSynchronization: 0
+  UseQuaternionCompression: 0
+  UseHalfFloatPrecision: 0
+  InLocalSpace: 0
+  Interpolate: 1
+  SlerpPosition: 0
 --- !u!114 &172152986153192707
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -339,12 +378,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fcaa55ec058cba448ac4854052945f48, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  hitbox: {fileID: 0}
   animator: {fileID: 7755899389646713349}
-  hitbox: {fileID: 6306526378279711933}
   defaultDamage: 5
   attackCooldown: 0.5
-  hitboxWindow: 0.2
-  inputEnabled: 1
+  attackCharges:
+    m_InternalValue: 0
+  maxAttackCharges: 3
+  chargesPerCorrect: 1
+  chargeCostPerAttack: 1
+  chargesUIPlaceholder: {fileID: 0}
 --- !u!95 &7755899389646713349
 Animator:
   serializedVersion: 5
@@ -554,3 +597,33 @@ LineRenderer:
   m_UseWorldSpace: 1
   m_Loop: 0
   m_ApplyActiveColorSpace: 1
+--- !u!114 &4251776492109054556
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8171198303131499827}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 38b3725827c1a9940bf7d4b87696a7d2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  moveSpeed: 6
+  dashSpeed: 12
+  dashCooldown: 1.2
+  dashDuration: 0.15
+  animator: {fileID: 7755899389646713349}
+  inputEnabled: 1
+--- !u!114 &8253046577569505593
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8171198303131499827}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 80d7c879794dfda4687da0e400131852, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 

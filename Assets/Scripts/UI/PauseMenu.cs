@@ -142,7 +142,7 @@ namespace BossFight2D.UI
       }
       return existing.GetComponent<Canvas>();
     }
-    void EnsureEventSystem() { var es = GameObject.FindFirstObjectByType<EventSystem>(); if (es == null) { var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule)); var sim = go.GetComponent<StandaloneInputModule>(); sim.forceModuleActive = true; } }
+    void EnsureEventSystem() { var es = GameObject.FindFirstObjectByType<EventSystem>(); if (es == null) { var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule)); } }
 
     // Attempt to auto-load a default UI font from Resources/Fonts similar to GameStateUI
     Font GetDefaultUIFont()

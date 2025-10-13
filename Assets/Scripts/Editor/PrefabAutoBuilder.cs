@@ -41,7 +41,7 @@ namespace BossFight2D.EditorTools
                 bodyCol.size = new Vector2(0.6f, 1.2f);
 
                 // Core scripts
-                go.AddComponent<BossFight2D.Player.PlayerController2D>();
+                go.AddComponent<BossFight2D.Player.PlayerController>();
                 var health = go.AddComponent<BossFight2D.Player.PlayerHealth>();
                 var focus = go.AddComponent<BossFight2D.Player.PlayerFocus>();
                 var combat = go.AddComponent<BossFight2D.Player.PlayerCombat>();
@@ -67,7 +67,7 @@ namespace BossFight2D.EditorTools
                 hitbox.autoDeactivateSeconds = 0.2f;
 
                 // Wire references
-                combat.hitbox = hitbox;
+
 
                 // Save prefab
                 var prefab = PrefabUtility.SaveAsPrefabAsset(go, PlayerPrefabPath);
@@ -99,6 +99,10 @@ namespace BossFight2D.EditorTools
                 // Core scripts
                 var sm = go.AddComponent<BossFight2D.Boss.BossStateMachine>();
                 var combat = go.AddComponent<BossFight2D.Boss.BossCombat>();
+                go.AddComponent<BossFight2D.Combat.Hurtbox2D>();
+                //var health = go.AddComponent<BossFight2D.Boss.BossHealth>();
+                //var controller = go.AddComponent<BossFight2D.Boss.BossController>();
+                go.AddComponent<Unity.Netcode.NetworkObject>();
 
                 // Animator + controller with Attack trigger
                 var animator = go.AddComponent<Animator>();

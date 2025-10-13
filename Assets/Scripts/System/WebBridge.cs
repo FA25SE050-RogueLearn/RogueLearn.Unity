@@ -89,4 +89,6 @@ public class WebBridge : MonoBehaviour
         var payload = new { result = "lose" };
         BMad_SendComplete(JsonUtility.ToJson(payload));
     }
+
+
 }

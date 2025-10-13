@@ -1,3 +1,4 @@
+/*
 using UnityEngine;
 using UnityEngine.UI;
 using BossFight2D.Systems;
@@ -18,3 +19,4 @@ public class CancelQuestionButton : MonoBehaviour
         if (gameObject.activeSelf != show) gameObject.SetActive(show);
     }
 }
+*/

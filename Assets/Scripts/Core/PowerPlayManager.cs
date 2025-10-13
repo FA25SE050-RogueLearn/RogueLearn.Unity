@@ -1,106 +1,118 @@
 using UnityEngine;
-using System.Collections;
-using BossFight2D.Player;
+using Unity.Netcode;
 using BossFight2D.Systems;
+using BossFight2D.Quiz;
 
 namespace BossFight2D.Core
 {
-    // Manages single-player Power Play window: lasts until first successful player hit on boss or timeout
-    public class PowerPlayManager : MonoBehaviour
+    public class PowerPlayManager : NetworkBehaviour
     {
         [Header("Window")]
-        public float windowDurationDefault = 5f; // seconds
-        public float cooldownSeconds = 10f; // user confirmed
+        public float windowDurationDefault = 10f;
 
-        [Header("Bonuses (applied to first hit only)")]
-        [Tooltip("Boss takes extra damage multiplier on first hit during window.")]
-        public float bossVulnerabilityMultiplier = 1.75f;
-        [Tooltip("Player outgoing damage bonus on first hit during window. 0.35 = +35%.")]
-        public float playerDamageBonus = 0.35f;
+        [Header("State")]
+        public NetworkVariable<bool> IsPowerPlayActive = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+        private float _windowEndTime;
+        private ulong _powerPlayPlayerId;
 
-        [Header("Mobility Buff During Window")]
-        [Tooltip("Temporary movement speed bonus while window is active.")]
-        public float sprintSpeedBonus = 0.20f; // +20% per user
+        [Header("Dependencies")]
+        public Transform readyStationTransform;
 
-        public bool Active { get; private set; }
-        public bool Consumed { get; private set; }
-        public float Remaining => Active ? Mathf.Max(0f, _windowEnd - Time.time) : 0f;
+        public static PowerPlayManager Instance { get; private set; }
 
-        float _windowEnd;
-        float _lastEndTime = -999f;
-
-        // Player speed cache
-        PlayerController2D _player;
-        float _origMove, _origDash;
-        bool _buffApplied;
-
-        void Awake() { DontDestroyOnLoad(this.gameObject); }
-
-        public void StartWindow(float durationSec = -1f)
+        void Awake()
         {
-            // Respect cooldown and ignore if already active
-            if (Active) return;
-            if (Time.time < _lastEndTime + cooldownSeconds) return;
-            Active = true; Consumed = false;
-            float dur = durationSec > 0f ? durationSec : windowDurationDefault;
-            _windowEnd = Time.time + dur;
-            ApplySprintBuff();
-            // Notify UI/Systems
-            EventBus.RaisePowerPlayStarted(dur);
-            StopAllCoroutines();
-            Debug.LogWarning($"Power Play window started for {dur} seconds.");
-            StartCoroutine(CoAutoEnd());
-        }
-
-        IEnumerator CoAutoEnd()
-        {
-            // End on first consume or timeout
-            while (Active && Time.time < _windowEnd && !Consumed) { yield return null; }
-            if (Active)
+            if (Instance != null && Instance != this)
             {
-                yield return new WaitForSeconds(0.5f);
-                EndWindow();
+                Destroy(gameObject);
+            }
+            else
+            {
+                Instance = this;
             }
         }
 
-        public int ModifyDamageOnBossHit(int baseDamage)
+        void Update()
         {
-            if (!Active || Consumed) return baseDamage;
-            float mult = (1f + Mathf.Max(0f, playerDamageBonus)) * Mathf.Max(0.01f, bossVulnerabilityMultiplier);
-            int final = Mathf.CeilToInt(baseDamage * mult);
-            Consumed = true;
-            StartCoroutine(CoAutoEnd());
-            return final;
-        }
+            if (!IsServer) return;
 
-        void ApplySprintBuff()
-        {
-            if (_buffApplied) return;
-            _player = _player ?? FindFirstObjectByType<PlayerController2D>();
-            if (_player != null)
+            if (IsPowerPlayActive.Value && Time.time >= _windowEndTime)
             {
-                _origMove = _player.moveSpeed; _origDash = _player.dashSpeed;
-                _player.moveSpeed = _origMove * (1f + sprintSpeedBonus);
-                _player.dashSpeed = _origDash * (1f + sprintSpeedBonus);
-                _buffApplied = true;
+                IsPowerPlayActive.Value = false;
+                Debug.Log("Power Play ended.");
+
+                ClientRpcParams clientRpcParams = new ClientRpcParams
+                {
+                    Send = new ClientRpcSendParams
+                    {
+                        TargetClientIds = new ulong[] { _powerPlayPlayerId }
+                    }
+                };
+                MovePlayerToReadyStationClientRpc(clientRpcParams);
+
+                QuizManager.Instance.EndPowerPlayAndStartNextQuestion();
             }
         }
 
-        void RemoveSprintBuff()
+        public void StartPowerPlay(ulong ownerClientId)
         {
-            if (!_buffApplied) return;
-            if (_player != null) { _player.moveSpeed = _origMove; _player.dashSpeed = _origDash; }
-            _buffApplied = false; _player = null;
+            if (!IsServer) return;
+
+            IsPowerPlayActive.Value = true;
+            _windowEndTime = Time.time + windowDurationDefault;
+            _powerPlayPlayerId = ownerClientId;
+            Debug.Log($"Power Play started for {windowDurationDefault} seconds for player {ownerClientId}.");
         }
 
-        public void EndWindow()
+        [ServerRpc(RequireOwnership = false)]
+        public void RequestPowerPlayServerRpc(ServerRpcParams rpcParams = default)
         {
-            if (!Active) return;
-            Active = false;
-            RemoveSprintBuff();
-            _lastEndTime = Time.time;
-            // Notify UI/Systems
-            EventBus.RaisePowerPlayEnded();
+            StartPowerPlay(rpcParams.Receive.SenderClientId);
+        }
+
+        public void EndPowerPlay()
+        {
+            if (!IsServer) return;
+
+            IsPowerPlayActive.Value = false;
+            Debug.Log("Power Play ended by boss hit.");
+
+            ClientRpcParams clientRpcParams = new ClientRpcParams
+            {
+                Send = new ClientRpcSendParams
+                {
+                    TargetClientIds = new ulong[] { _powerPlayPlayerId }
+                }
+            };
+
+            MovePlayerToReadyStationClientRpc(clientRpcParams);
+            QuizManager.Instance.EndPowerPlayAndStartNextQuestion();
+        }
+
+
+
+        [ClientRpc]
+        private void MovePlayerToReadyStationClientRpc(ClientRpcParams clientRpcParams = default)
+        {
+         
+            if (readyStationTransform != null)
+            {
+                NetworkObject playerObject = NetworkManager.Singleton.LocalClient.PlayerObject;
+                if (playerObject != null)
+                {
+                    playerObject.transform.position = readyStationTransform.position;
+                }
+            }
+        }
+
+        public int ModifyDamageOnBossHit(int damage)
+        {
+            if (IsPowerPlayActive.Value)
+            {
+                // Apply bonus damage during Power Play
+                return damage * 2; // Example: double damage
+            }
+            return damage;
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.EventSystems;
@@ -135,8 +135,6 @@ namespace BossFight2D.UI
       if (es == null)
       {
         var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
-        var sim = go.GetComponent<StandaloneInputModule>();
-        sim.forceModuleActive = true;
       }
     }
 

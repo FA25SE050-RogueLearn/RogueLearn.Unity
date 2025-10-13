@@ -4,11 +4,16 @@ using BossFight2D;
 using BossFight2D.Player;
 using BossFight2D.Core;
 using BossFight2D.Effects;
+using BossFight2D.Quiz;
 
 namespace BossFight2D.Boss
 {
     public class BossCombat : MonoBehaviour
     {
+        private ReadyStation _readyStation;
+
+        [Header("Game State")]
+        [Tooltip("If true, the boss will patrol while a question is active. If false, it will stand still.")]
         public Animator animator;
         public BossFight2D.Combat.Hitbox2D hitbox;
         public float windup = 0.2f;
@@ -106,12 +111,27 @@ namespace BossFight2D.Boss
 
         int _queuedDamage = 1;
 
-        void Awake() { if (animator == null) animator = GetComponentInChildren<Animator>(); if (hitbox == null) hitbox = GetComponentInChildren<BossFight2D.Combat.Hitbox2D>(); if (playerTransform == null) { var pc = FindFirstObjectByType<PlayerController2D>(); if (pc != null) playerTransform = pc.transform; } if (sr == null) sr = GetComponentInChildren<SpriteRenderer>(); if (hitbox != null) { _hitboxDefaultLocalRotation = hitbox.transform.localRotation; _hitboxDefaultLocalPosition = hitbox.transform.localPosition; } rb = GetComponent<Rigidbody2D>(); gm = FindFirstObjectByType<GameManager>(); }
+        void Awake()
+        {
+            if (animator == null) animator = GetComponentInChildren<Animator>();
+            if (hitbox == null) hitbox = GetComponentInChildren<BossFight2D.Combat.Hitbox2D>();
+            if (playerTransform == null)
+            {
+                var pc = FindFirstObjectByType<PlayerController>();
+                if (pc != null) playerTransform = pc.transform;
+            }
+            if (sr == null) sr = GetComponentInChildren<SpriteRenderer>();
+            if (hitbox != null)
+            {
+                _hitboxDefaultLocalRotation = hitbox.transform.localRotation;
+                _hitboxDefaultLocalPosition = hitbox.transform.localPosition;
+            }
+            rb = GetComponent<Rigidbody2D>();
+            gm = FindFirstObjectByType<GameManager>();
+            _readyStation = FindObjectOfType<ReadyStation>();
+        }
 
-        void OnEnable() { BossFight2D.Systems.EventBus.QuestionStarted += OnQuestionStarted; BossFight2D.Systems.EventBus.AnswerSubmitted += OnAnswerSubmitted; BossFight2D.Systems.EventBus.QuestionTimeout += OnQuestionTimeout; BossFight2D.Systems.EventBus.PowerPlayStarted += OnPowerPlayStarted; BossFight2D.Systems.EventBus.PowerPlayEnded += OnPowerPlayEnded; }
-        void OnDisable() { BossFight2D.Systems.EventBus.QuestionStarted -= OnQuestionStarted; BossFight2D.Systems.EventBus.AnswerSubmitted -= OnAnswerSubmitted; BossFight2D.Systems.EventBus.QuestionTimeout -= OnQuestionTimeout; BossFight2D.Systems.EventBus.PowerPlayStarted -= OnPowerPlayStarted; BossFight2D.Systems.EventBus.PowerPlayEnded -= OnPowerPlayEnded; }
-
-        void OnQuestionStarted(BossFight2D.Systems.QuestionData q)
+        void OnEnable()
         {
             _questionActive = true;
             if (!patrolDuringQuestion) { _patrolling = false; return; }
@@ -152,7 +172,7 @@ namespace BossFight2D.Boss
         public void QueueAttack(int damage, GameObject target = null)
         {
             // Suppress normal attacks while the player is in the safe zone (ready inside station) unless we are in punish flow
-            if (ReadyStation.SafeZoneActive && !_isPunishAttack) return;
+            if (QuizManager.Instance != null && QuizManager.Instance.State.Value != QuizState.Idle && !_isPunishAttack) return;
             _queuedDamage = damage;
             if (animator != null) animator.SetTrigger("Attack");
             if (hitbox != null && !useAnimationEvents)
@@ -357,7 +377,8 @@ namespace BossFight2D.Boss
         void FixedUpdate()
         {
             // Effective safe zone gating: only suppress chase if the safe zone is active AND the player is actually inside station bounds.
-            bool effectiveSafeZone = ReadyStation.SafeZoneActive && PlayerInsideStationBounds();
+            bool inQuiz = QuizManager.Instance != null && QuizManager.Instance.State.Value != QuizState.Idle;
+            bool effectiveSafeZone = inQuiz && PlayerInsideStationBounds();
             // If safe zone active (and we're not in punish flow), do not chase. Boss can still orbit if patrolling was enabled by question.
             if (effectiveSafeZone && !_isPunishAttack)
             {
@@ -389,7 +410,7 @@ namespace BossFight2D.Boss
             if (playerTransform != null && rb != null)
             {
                 Vector2 target = playerTransform.position;
-                var col = ReadyStation.StationCollider;
+                var col = _readyStation != null ? _readyStation.GetComponent<Collider2D>() : null;
                 Rect r = default;
                 if (col != null) { var b = col.bounds; r = new Rect(b.min, b.size); r.xMin -= stationAvoidMargin; r.yMin -= stationAvoidMargin; r.xMax += stationAvoidMargin; r.yMax += stationAvoidMargin; }
 
@@ -467,7 +488,8 @@ namespace BossFight2D.Boss
 
         Vector2 KeepOutsideStation(Vector2 proposed)
         {
-            var col = ReadyStation.StationCollider; if (col == null) return proposed;
+            var col = _readyStation != null ? _readyStation.GetComponent<Collider2D>() : null;
+            if (col == null) return proposed;
             var b = col.bounds;
             // If proposed point inside bounds, project to nearest edge
             if (proposed.x > b.min.x && proposed.x < b.max.x && proposed.y > b.min.y && proposed.y < b.max.y)
@@ -488,7 +510,8 @@ namespace BossFight2D.Boss
 
         bool PlayerInsideStationBounds()
         {
-            var col = ReadyStation.StationCollider; if (col == null || playerTransform == null) return false;
+            var col = _readyStation != null ? _readyStation.GetComponent<Collider2D>() : null; 
+            if (col == null || playerTransform == null) return false;
             var b = col.bounds; var p = playerTransform.position;
             return (p.x > b.min.x && p.x < b.max.x && p.y > b.min.y && p.y < b.max.y);
         }

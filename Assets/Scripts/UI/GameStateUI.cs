@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
@@ -179,8 +179,6 @@ namespace BossFight2D.UI {
       var es = GameObject.FindFirstObjectByType<EventSystem>();
       if(es == null){
         var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
-        var sim = go.GetComponent<StandaloneInputModule>();
-        sim.forceModuleActive = true;
       }
     }
     // Attempt to auto-load Liberation Sans font from Resources/Fonts

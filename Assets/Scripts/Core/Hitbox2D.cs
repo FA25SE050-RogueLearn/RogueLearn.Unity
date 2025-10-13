@@ -1,9 +1,11 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-namespace BossFight2D.Combat {
+namespace BossFight2D.Combat
+{
   [RequireComponent(typeof(Collider2D))]
-  public class Hitbox2D : MonoBehaviour {
+  public class Hitbox2D : MonoBehaviour
+  {
     public int defaultDamage = 1;
     public GameObject owner;
     public bool disableColliderWhenInactive = true;
@@ -26,95 +28,110 @@ namespace BossFight2D.Combat {
     Collider2D _col;
     HashSet<Collider2D> _hitSet = new HashSet<Collider2D>();
 
-    void Awake(){
+    void Awake()
+    {
       _col = GetComponent<Collider2D>();
-      if(_col) _col.isTrigger = true;
-      if(disableColliderWhenInactive && _col) _col.enabled = false;
-      if(owner==null) owner = transform.root!=null? transform.root.gameObject : null;
+      if (_col) _col.isTrigger = true;
+      if (disableColliderWhenInactive && _col) _col.enabled = false;
+      if (owner == null) owner = transform.root != null ? transform.root.gameObject : null;
     }
 
-    void OnEnable(){ _hitSet.Clear(); }
+    void OnEnable() { _hitSet.Clear(); }
 
-    void Update(){ if(_active && autoDeactivateSeconds>0f && Time.time >= _deactivateAt){ Deactivate(); } }
+    void Update() { if (_active && autoDeactivateSeconds > 0f && Time.time >= _deactivateAt) { Deactivate(); } }
 
-    public void Activate(float duration = -1f, int damageOverride = -1){
+    public void Activate(float duration = -1f, int damageOverride = -1)
+    {
       _active = true;
-      _currentDamage = (damageOverride>=0? damageOverride : defaultDamage);
+      _currentDamage = (damageOverride >= 0 ? damageOverride : defaultDamage);
       _hitSet.Clear();
-      if(disableColliderWhenInactive && _col) _col.enabled = true;
-      if(duration>0f){ autoDeactivateSeconds = duration; _deactivateAt = Time.time + duration; }
+      if (disableColliderWhenInactive && _col) _col.enabled = true;
+      if (duration > 0f) { autoDeactivateSeconds = duration; _deactivateAt = Time.time + duration; }
       // Debug draw the hitbox shape while active
-      if(debugDrawActive) DrawDebug(duration>0f ? duration : 0.2f);
+      if (debugDrawActive) DrawDebug(duration > 0f ? duration : 0.2f);
     }
 
-    public void Deactivate(){
+    public void Deactivate()
+    {
       _active = false;
-      if(disableColliderWhenInactive && _col) _col.enabled = false;
+      if (disableColliderWhenInactive && _col) _col.enabled = false;
       _hitSet.Clear();
     }
 
-    void OnTriggerEnter2D(Collider2D other){
-      if(!_active) return;
-      if(owner!=null && other.transform.IsChildOf(owner.transform)) return;
-      if(_hitSet.Contains(other)) return;
+    void OnTriggerEnter2D(Collider2D other)
+    {
+      if (!_active) return;
+      if (owner != null && other.transform.IsChildOf(owner.transform)) return;
+      if (_hitSet.Contains(other)) return;
       // Layer mask filter
-      if(((1 << other.gameObject.layer) & targetLayers.value) == 0) return;
+      if (((1 << other.gameObject.layer) & targetLayers.value) == 0) return;
       // Hurtbox requirement
       IDamageable dmg = null;
-      if(requireHurtbox){
-        var hb = other.GetComponent<BossFight2D.Combat.Hurtbox2D>();
-        if(hb==null) return;
+      if (requireHurtbox)
+      {
+        var hb = other.GetComponent<Hurtbox2D>();
+        if (hb == null) return;
+        Debug.Log($"[Hitbox2D] {name} hit {other.name} with {_currentDamage} damage");
         dmg = hb.GetDamageable();
-      } else {
-        dmg = other.GetComponentInParent<IDamageable>();
       }
-      if(dmg!=null){
+      else
+      {
+        dmg = other.GetComponentInParent<IDamageable>();
+        if (dmg == null) return;
+        Debug.Log($"[Hitbox2D] {name} hit {other.name} with {_currentDamage} damage");
+      }
+      if (dmg != null)
+      {
         // Apply Power Play bonus only when striking the boss, and consume window on successful hit
         int applied = _currentDamage;
-        var boss = other.GetComponentInParent<BossFight2D.Boss.BossStateMachine>();
-        var ppm = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.PowerPlayManager>();
-        if(ppm!=null && boss!=null){ applied = ppm.ModifyDamageOnBossHit(applied); BossFight2D.Systems.EventBus.RaisePowerPlayHitConfirmed(); }
+        var boss = other.GetComponentInParent<BossHealth>();
+        var ppm = BossFight2D.Core.PowerPlayManager.Instance;
+        if (ppm != null && boss != null) { applied = ppm.ModifyDamageOnBossHit(applied); BossFight2D.Systems.EventBus.RaisePowerPlayHitConfirmed(); }
         dmg.TakeDamage(applied);
-        if(debugLogHits) Debug.Log($"[Hitbox2D] {name} hit {other.name} for {applied}");
+        if (debugLogHits) Debug.Log($"[Hitbox2D] {name} hit {other.name} for {applied}");
         _hitSet.Add(other);
       }
     }
 
     // Also handle the case where the target was already overlapping when the hitbox activated
-    void OnTriggerStay2D(Collider2D other){
-      if(!_active) return;
-      if(owner!=null && other.transform.IsChildOf(owner.transform)) return;
-      if(_hitSet.Contains(other)) return;
+    void OnTriggerStay2D(Collider2D other)
+    {
+      if (!_active) return;
+      if (owner != null && other.transform.IsChildOf(owner.transform)) return;
+      if (_hitSet.Contains(other)) return;
       // Layer mask filter
-      if(((1 << other.gameObject.layer) & targetLayers.value) == 0) return;
+      if (((1 << other.gameObject.layer) & targetLayers.value) == 0) return;
       // Hurtbox requirement
       IDamageable dmg = null;
-      if(requireHurtbox){
-        var hb = other.GetComponent<BossFight2D.Combat.Hurtbox2D>();
-        if(hb==null) return;
+      if (requireHurtbox)
+      {
+        var hb = other.GetComponentInParent<BossFight2D.Combat.Hurtbox2D>();
+        if (hb == null) return;
         dmg = hb.GetDamageable();
-      } else {
+      }
+      else
+      {
         dmg = other.GetComponentInParent<IDamageable>();
       }
-      if(dmg!=null){
+      if (dmg != null)
+      {
         int applied = _currentDamage;
-        var boss = other.GetComponentInParent<BossFight2D.Boss.BossStateMachine>();
-        var ppm = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.PowerPlayManager>();
-        if(ppm!=null && boss!=null){ applied = ppm.ModifyDamageOnBossHit(applied); BossFight2D.Systems.EventBus.RaisePowerPlayHitConfirmed(); }
+        var boss = other.GetComponent<BossHealth>();
+        var ppm = BossFight2D.Core.PowerPlayManager.Instance;
+        if (ppm != null && boss != null) { applied = ppm.ModifyDamageOnBossHit(applied); BossFight2D.Systems.EventBus.RaisePowerPlayHitConfirmed(); }
         dmg.TakeDamage(applied);
-        if(debugLogHits) Debug.Log($"[Hitbox2D] (Stay) {name} hit {other.name} for {applied}");
+        if (debugLogHits) Debug.Log($"[Hitbox2D] (Stay) {name} hit {other.name} for {applied}");
         _hitSet.Add(other);
       }
     }
 
-    public void AnimationEvent_HitboxStart(){ Activate(autoDeactivateSeconds>0? autoDeactivateSeconds : 0.2f, _currentDamage); }
-    public void AnimationEvent_HitboxEnd(){ Deactivate(); }
-
     // Draw the collider outline in world space for a given duration
-    void DrawDebug(float duration){
-      if(_col==null) return;
+    void DrawDebug(float duration)
+    {
+      if (_col == null) return;
       var bc = _col as BoxCollider2D;
-      if(bc!=null){
+      if (bc != null)
+      {
         Vector2 size = bc.size;
         Vector2 offset = bc.offset;
         Vector3 c = transform.TransformPoint(offset);
@@ -131,14 +148,16 @@ namespace BossFight2D.Combat {
         return;
       }
       var cc = _col as CircleCollider2D;
-      if(cc!=null){
+      if (cc != null)
+      {
         Vector3 center = transform.TransformPoint(cc.offset);
         float radius = cc.radius * Mathf.Max(transform.lossyScale.x, transform.lossyScale.y);
         int segs = Mathf.Max(8, debugCircleSegments);
         Vector3 prev = center + new Vector3(radius, 0, 0);
-        for(int i=1;i<=segs;i++){
+        for (int i = 1; i <= segs; i++)
+        {
           float ang = i * Mathf.PI * 2f / segs;
-          Vector3 next = center + new Vector3(Mathf.Cos(ang)*radius, Mathf.Sin(ang)*radius, 0);
+          Vector3 next = center + new Vector3(Mathf.Cos(ang) * radius, Mathf.Sin(ang) * radius, 0);
           Debug.DrawLine(prev, next, debugColor, duration);
           prev = next;
         }

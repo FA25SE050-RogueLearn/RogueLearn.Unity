@@ -41,13 +41,13 @@ public class SceneBootstrapper : MonoBehaviour
             return;
         }
 
-        EnsureSystems();
-        var player = EnsurePlayer();
-        EnsureBoss();
+        // EnsureSystems();
+        // var player = EnsurePlayer();
+        //EnsureBoss();
         // Optionally: you can add camera or lighting bootstrap here later
 
         // Gate game start via a ReadyStation trigger near the player
-        EnsureReadyStation(player);
+        // EnsureReadyStation(player);
         // Start is gated by ReadyStation; do not auto-start here.
         // The game will transition from Init to Playing when the player marks Ready at the station.
     }
@@ -55,7 +55,6 @@ public class SceneBootstrapper : MonoBehaviour
     private void EnsureSystems()
     {
         var gm = FindFirstObjectByType<GameManager>();
-        var qm = FindFirstObjectByType<QuestionManager>();
         GameObject systemsRoot = null;
 
         if (gm == null)
@@ -66,76 +65,6 @@ public class SceneBootstrapper : MonoBehaviour
         else
         {
             systemsRoot = gm.gameObject;
-        }
-
-        if (qm == null)
-        {
-            qm = systemsRoot.AddComponent<QuestionManager>();
-        }
-
-        // Prefer wiring to existing objects the user already has in the scene
-        var existingBoss = FindFirstObjectByType<BossStateMachine>();
-        if (qm.bossOverride == null && existingBoss != null)
-            qm.bossOverride = existingBoss;
-
-        var existingPlayerHealth = FindFirstObjectByType<PlayerHealth>();
-        if (qm.playerOverride == null && existingPlayerHealth != null)
-            qm.playerOverride = existingPlayerHealth;
-
-        // Try to auto-assign an existing Question Panel by common name
-        if (qm.questionPanel == null)
-        {
-            var maybePanel = GameObject.Find("QuestionPanel");
-            if (maybePanel != null) qm.questionPanel = maybePanel;
-        }
-
-        // Ensure the panel has a controller that binds UI elements to QuestionManager
-        if (qm.questionPanel != null)
-        {
-            var controller = qm.questionPanel.GetComponent<QuestionPanelController>();
-            if (controller == null)
-            {
-                qm.questionPanel.AddComponent<QuestionPanelController>();
-            }
-        }
-
-        // Attach lifeline system (optional)
-        var lifelines = FindFirstObjectByType<LifelineSystem>();
-        if (lifelines == null)
-        {
-            lifelines = systemsRoot.AddComponent<LifelineSystem>();
-        }
-        // If user already has a PlayerFocus, prefer wiring it
-        if (lifelines.focus == null)
-        {
-            var existingFocus = FindFirstObjectByType<PlayerFocus>();
-            if (existingFocus != null) lifelines.focus = existingFocus;
-        }
-
-        // Attach dev hotkeys if present
-        if (FindFirstObjectByType<DevAnswerHotkeys>() == null)
-        {
-            systemsRoot.AddComponent<DevAnswerHotkeys>();
-        }
-
-        // Add debug overlay ONLY if user does not have a question panel assigned
-        if (qm.questionPanel == null && FindFirstObjectByType<QuestionDebugOverlay>() == null)
-        {
-            systemsRoot.AddComponent<QuestionDebugOverlay>();
-        }
-
-        // Assign question pack from Resources if not set
-        if (qm.questionsJson == null)
-        {
-            var text = Resources.Load<TextAsset>("QuestionPacks/questions_pack1");
-            if (text != null)
-            {
-                qm.questionsJson = text;
-            }
-            else
-            {
-                Debug.LogWarning("SceneBootstrapper: Could not find Questions at Resources/QuestionPacks/questions_pack1.json");
-            }
         }
 
         // Ensure WebBridge is present for WebGL messaging
@@ -149,7 +78,7 @@ public class SceneBootstrapper : MonoBehaviour
         {
             systemsRoot.AddComponent<PlayerHUD>();
         }
-        
+
         // Ensure BossHUD exists to drive Boss Health UI (slider named "BossHealth")
         if (FindFirstObjectByType<BossFight2D.UI.BossHUD>() == null)
         {
@@ -174,7 +103,7 @@ public class SceneBootstrapper : MonoBehaviour
 
     private GameObject EnsurePlayer()
     {
-        var playerController = FindFirstObjectByType<PlayerController2D>();
+        var playerController = FindFirstObjectByType<PlayerController>();
         GameObject go;
         if (playerController != null)
         {
@@ -188,7 +117,7 @@ public class SceneBootstrapper : MonoBehaviour
 
             var camera = FindFirstObjectByType<CinemachineVirtualCamera>();
 
-            if(camera)
+            if (camera)
             {
                 camera.Follow = go.transform;
             }
@@ -202,7 +131,7 @@ public class SceneBootstrapper : MonoBehaviour
             rb.freezeRotation = true;
 
             go.AddComponent<CircleCollider2D>();
-            go.AddComponent<PlayerController2D>();
+            go.AddComponent<PlayerController>();
         }
 
         // Ensure health/focus components exist so user can wire them up in Inspector
@@ -210,7 +139,7 @@ public class SceneBootstrapper : MonoBehaviour
         if (go.GetComponent<PlayerFocus>() == null) go.AddComponent<PlayerFocus>();
         // Ensure question guard to freeze input & invincibility during questions
         if (go.GetComponent<BossFight2D.Player.PlayerQuestionGuard>() == null) go.AddComponent<BossFight2D.Player.PlayerQuestionGuard>();
-    
+
         return go;
     }
 
@@ -227,6 +156,9 @@ public class SceneBootstrapper : MonoBehaviour
 
         go.AddComponent<BoxCollider2D>();
         go.AddComponent<BossStateMachine>();
+        go.AddComponent<BossHealth>();
+        go.AddComponent<BossController>();
+        go.AddComponent<Unity.Netcode.NetworkObject>();
     }
 
     private int TryGetLayer(string name)
