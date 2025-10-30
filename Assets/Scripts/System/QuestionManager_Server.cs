@@ -3,6 +3,7 @@ using Unity.Netcode;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using UnityEngine.Networking;
 
 namespace BossFight2D.Systems
 {
@@ -41,22 +42,77 @@ namespace BossFight2D.Systems
                 enabled = false;
                 return;
             }
-            LoadQuestions();
+            // Load questions on the server using a WebGL-friendly approach
+            StartCoroutine(LoadQuestionsCoroutine());
         }
 
-        private void LoadQuestions()
+        private IEnumerator LoadQuestionsCoroutine()
         {
-            string filePath = Path.Combine(Application.streamingAssetsPath, "questions_pack1.json");
+            string path = Path.Combine(Application.streamingAssetsPath, "questions_pack1.json");
 
-            if (File.Exists(filePath))
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // In WebGL, StreamingAssets must be loaded via UnityWebRequest
+            using (var req = UnityWebRequest.Get(path))
             {
-                string dataAsJson = File.ReadAllText(filePath);
-                var w = JsonUtility.FromJson<Wrapper>(dataAsJson);
-                Pack = w != null ? w.pack : null;
-                if (Pack != null) { Debug.Log($"Loaded Question Pack: {Pack.name} with {Pack.questions.Count} questions."); }
-                else { Debug.LogError("Failed to load or parse question pack."); }
+                yield return req.SendWebRequest();
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogError($"Failed to load questions from '{path}' on WebGL: {req.error}. Fallback to Resources.");
+                    FallbackLoadFromResources();
+                    yield break;
+                }
+                string dataAsJson = req.downloadHandler.text;
+                ApplyPackFromJson(dataAsJson);
+                yield break;
             }
-            else { Debug.LogError("questionsJson TextAsset is null. Make sure 'questions_pack1.json' exists in the StreamingAssets folder."); }
+#else
+            // Non-WebGL: prefer direct file I/O, fallback to UnityWebRequest if needed
+            if (File.Exists(path))
+            {
+                string dataAsJson = File.ReadAllText(path);
+                ApplyPackFromJson(dataAsJson);
+                yield break;
+            }
+            else
+            {
+                using (var req = UnityWebRequest.Get(path))
+                {
+                    yield return req.SendWebRequest();
+                    if (req.result == UnityWebRequest.Result.Success)
+                    {
+                        string dataAsJson = req.downloadHandler.text;
+                        ApplyPackFromJson(dataAsJson);
+                    }
+                    else
+                    {
+                        Debug.LogError($"Failed to load questions from '{path}': {req.error}. Fallback to Resources.");
+                        FallbackLoadFromResources();
+                    }
+                }
+            }
+#endif
+        }
+
+        private void ApplyPackFromJson(string dataAsJson)
+        {
+            var w = JsonUtility.FromJson<Wrapper>(dataAsJson);
+            Pack = w != null ? w.pack : null;
+            if (Pack != null) { Debug.Log($"Loaded Question Pack: {Pack.name} with {Pack.questions.Count} questions."); }
+            else { Debug.LogError("Failed to load or parse question pack."); }
+        }
+
+        private void FallbackLoadFromResources()
+        {
+            // Optional fallback: load from Resources/QuestionPacks/questions_pack1
+            var ta = Resources.Load<TextAsset>("QuestionPacks/questions_pack1");
+            if (ta != null)
+            {
+                ApplyPackFromJson(ta.text);
+            }
+            else
+            {
+                Debug.LogError("Could not load 'questions_pack1' from Resources as a fallback. Ensure the JSON exists in StreamingAssets or Resources.");
+            }
         }
 
         public void SelectAndSendNextQuestion()

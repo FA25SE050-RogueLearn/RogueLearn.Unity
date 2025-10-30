@@ -230,7 +230,8 @@ namespace BossFight2D.UI
         {
             if (QuizManager.Instance != null && isActive)
             {
-                QuizManager.Instance.SubmitAnswer(NetworkManager.Singleton.LocalClientId, choice);
+                // Send the answer through the network so non-host clients are handled correctly
+                QuizManager.Instance.SubmitAnswerServerRpc(choice);
                 SetButtonsInteractable(false); // Prevent multiple submissions
             }
         }

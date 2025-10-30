@@ -40,6 +40,8 @@ namespace BossFight2D.Core
             {
                 IsPowerPlayActive.Value = false;
                 Debug.Log("Power Play ended.");
+                // Notify clients to update UI overlays and state
+                NotifyPowerPlayEndedClientRpc();
 
                 ClientRpcParams clientRpcParams = new ClientRpcParams
                 {
@@ -62,6 +64,17 @@ namespace BossFight2D.Core
             _windowEndTime = Time.time + windowDurationDefault;
             _powerPlayPlayerId = ownerClientId;
             Debug.Log($"Power Play started for {windowDurationDefault} seconds for player {ownerClientId}.");
+            // Grant full attack charges to the activating player to maximize damage potential during Power Play
+            if (NetworkManager.Singleton.ConnectedClients.TryGetValue(ownerClientId, out var client))
+            {
+                var pc = client.PlayerObject != null ? client.PlayerObject.GetComponent<Player.PlayerCombat>() : null;
+                if (pc != null)
+                {
+                    pc.FillChargesToMax();
+                }
+            }
+            // Notify clients to show Power Play overlay and adjust UI
+            NotifyPowerPlayStartedClientRpc(windowDurationDefault);
         }
 
         [ServerRpc(RequireOwnership = false)]
@@ -76,6 +89,8 @@ namespace BossFight2D.Core
 
             IsPowerPlayActive.Value = false;
             Debug.Log("Power Play ended by boss hit.");
+            // Notify clients to hide overlay and restore UI
+            NotifyPowerPlayEndedClientRpc();
 
             ClientRpcParams clientRpcParams = new ClientRpcParams
             {
@@ -87,6 +102,18 @@ namespace BossFight2D.Core
 
             MovePlayerToReadyStationClientRpc(clientRpcParams);
             QuizManager.Instance.EndPowerPlayAndStartNextQuestion();
+        }
+
+        [ClientRpc]
+        private void NotifyPowerPlayStartedClientRpc(float duration)
+        {
+            EventBus.RaisePowerPlayStarted(duration);
+        }
+
+        [ClientRpc]
+        private void NotifyPowerPlayEndedClientRpc()
+        {
+            EventBus.RaisePowerPlayEnded();
         }
 
 

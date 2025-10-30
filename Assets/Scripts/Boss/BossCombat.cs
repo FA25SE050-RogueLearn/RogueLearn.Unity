@@ -64,6 +64,10 @@ namespace BossFight2D.Boss
         [Tooltip("Distance (units) to push the hitbox forward in the aimed direction during the attack.")]
         public float hitboxForwardDistance = 1f;
         Vector3 _hitboxDefaultLocalPosition;
+        // Attempts to reacquire the player transform if missing (e.g., boss spawned before player)
+        float _nextPlayerFindTime;
+        [Tooltip("Seconds between attempts to reacquire the PlayerController if not yet found.")]
+        public float playerFindInterval = 1.0f;
 
         // Patrol during question
         [Header("Patrol During Question")]
@@ -143,6 +147,21 @@ namespace BossFight2D.Boss
             {
                 _patrolling = true;
             }
+
+            // Subscribe to global events
+            EventBus.AnswerSubmitted += OnAnswerSubmitted;
+            EventBus.QuestionTimeout += OnQuestionTimeout;
+            EventBus.PowerPlayStarted += OnPowerPlayStarted;
+            EventBus.PowerPlayEnded += OnPowerPlayEnded;
+        }
+
+        void OnDisable()
+        {
+            // Unsubscribe to avoid memory leaks and duplicate handlers
+            EventBus.AnswerSubmitted -= OnAnswerSubmitted;
+            EventBus.QuestionTimeout -= OnQuestionTimeout;
+            EventBus.PowerPlayStarted -= OnPowerPlayStarted;
+            EventBus.PowerPlayEnded -= OnPowerPlayEnded;
         }
         void OnAnswerSubmitted(int choice, bool correct)
         {
@@ -192,6 +211,9 @@ namespace BossFight2D.Boss
             }
         }
 
+        /// <summary>
+        /// Activates the hitbox for the boss attack.
+        /// </summary>
         void BeginHitbox()
         {
             // Remove telegraph when the attack starts
@@ -200,8 +222,10 @@ namespace BossFight2D.Boss
             {
                 if (lockAttackToTelegraph && _hasPredicted)
                 {
+
                     hitbox.transform.rotation = _predictedHitboxWorldRot;
                     hitbox.transform.position = _predictedHitboxWorldPos;
+
                 }
                 else
                 {
@@ -217,7 +241,15 @@ namespace BossFight2D.Boss
                         Vector3 baseWorld = transform.TransformPoint(_hitboxDefaultLocalPosition);
                         // Push forward along the aimed (right) vector
                         Vector3 forward = hitbox.transform.right;
-                        hitbox.transform.position = baseWorld + forward * Mathf.Clamp((transform.position - playerTransform.position).magnitude, 0, hitboxForwardDistance);
+                        if (_isPunishAttack && playerTransform != null)
+                        {
+                            // Snap hitbox to player's position for punish attacks
+                            hitbox.transform.position = playerTransform.position;
+                        }
+                        else
+                        {
+                            hitbox.transform.position = baseWorld + forward * Mathf.Clamp((transform.position - playerTransform.position).magnitude, 0, hitboxForwardDistance);
+                        }
                     }
                 }
                 hitbox.Activate(hitboxWindow, _queuedDamage);
@@ -228,12 +260,39 @@ namespace BossFight2D.Boss
                 Debug.DrawLine(transform.position, playerTransform.position, debugAttackColor, hitboxWindow);
             }
         }
-        void EndHitbox() { if (hitbox != null) { hitbox.Deactivate(); hitbox.transform.localRotation = _hitboxDefaultLocalRotation; hitbox.transform.localPosition = _hitboxDefaultLocalPosition; } _queuedDamage = 1; if (_isPunishAttack) { EventBus.RaiseWrongAnswerChallengeEnded(); _isPunishAttack = false; } ResetPrediction(); }
+        /// <summary>
+        /// Deactivates the hitbox after the attack.
+        /// </summary>
+        void EndHitbox()
+        {
+            if (hitbox != null)
+            {
+                hitbox.Deactivate();
+                hitbox.transform.localRotation = _hitboxDefaultLocalRotation;
+                hitbox.transform.localPosition = _hitboxDefaultLocalPosition;
+            }
+            _queuedDamage = 1;
+            if (_isPunishAttack)
+            {
+                EventBus.RaiseWrongAnswerChallengeEnded();
+                _isPunishAttack = false;
+            }
+            ResetPrediction();
+        }
 
+        /// <summary>
+        /// Triggers the hitbox activation at the start of the animation.
+        /// </summary>
         public void AnimationEvent_HitboxStart() { BeginHitbox(); }
+        /// <summary>
+        /// Triggers the hitbox deactivation at the end of the animation.
+        /// </summary>  
         public void AnimationEvent_HitboxEnd() { EndHitbox(); }
 
-        // Create a telegraph instance at the predicted hit position/rotation and scale it to the collider size
+        /// <summary>
+        /// Creates a telegraph instance at the predicted hit position/rotation and scales it to the collider size.
+        /// </summary>
+        /// <param name="duration">The duration for which the telegraph should be visible.</param>
         void ShowTelegraph(float duration)
         {
             // If we already have one, refresh position/rotation/scale and reschedule removal
@@ -262,8 +321,16 @@ namespace BossFight2D.Boss
                 Vector3 baseWorld = transform.TransformPoint(_hitboxDefaultLocalPosition);
                 // Forward along the predictedRotation's right vector
                 Vector3 forward = predictedRotation * Vector3.right;
-                float forwardDist = playerTransform != null ? Mathf.Clamp((transform.position - playerTransform.position).magnitude, 0, hitboxForwardDistance) : hitboxForwardDistance;
-                predictedPosition = baseWorld + forward * forwardDist;
+                if (_isPunishAttack && playerTransform != null)
+                {
+                    // For punish attacks, telegraph at the player's current position
+                    predictedPosition = playerTransform.position;
+                }
+                else
+                {
+                    float forwardDist = playerTransform != null ? Mathf.Clamp((transform.position - playerTransform.position).magnitude, 0, hitboxForwardDistance) : hitboxForwardDistance;
+                    predictedPosition = baseWorld + forward * forwardDist;
+                }
             }
             else
             {
@@ -349,6 +416,9 @@ namespace BossFight2D.Boss
             }
         }
 
+        /// <summary>
+        /// Hides the active telegraph after the specified duration.
+        /// </summary>
         void HideTelegraph()
         {
             if (_activeTelegraph != null)
@@ -358,6 +428,9 @@ namespace BossFight2D.Boss
             }
         }
 
+        /// <summary>
+        /// Resets the predicted hitbox position and rotation.
+        /// </summary>
         void ResetPrediction()
         {
             _hasPredicted = false;
@@ -366,6 +439,13 @@ namespace BossFight2D.Boss
         }
         void Update()
         {
+            // Reacquire player transform if missing (boss may spawn before player)
+            if (playerTransform == null && Time.time >= _nextPlayerFindTime)
+            {
+                var pc = FindFirstObjectByType<PlayerController>();
+                if (pc != null) playerTransform = pc.transform;
+                _nextPlayerFindTime = Time.time + playerFindInterval;
+            }
             if (facePlayer && playerTransform != null && sr != null)
             {
                 bool faceRight = playerTransform.position.x >= transform.position.x;
@@ -376,6 +456,13 @@ namespace BossFight2D.Boss
 
         void FixedUpdate()
         {
+            // Reacquire player in physics loop as a fallback
+            if (playerTransform == null && Time.time >= _nextPlayerFindTime)
+            {
+                var pc = FindFirstObjectByType<PlayerController>();
+                if (pc != null) playerTransform = pc.transform;
+                _nextPlayerFindTime = Time.time + playerFindInterval;
+            }
             // Effective safe zone gating: only suppress chase if the safe zone is active AND the player is actually inside station bounds.
             bool inQuiz = QuizManager.Instance != null && QuizManager.Instance.State.Value != QuizState.Idle;
             bool effectiveSafeZone = inQuiz && PlayerInsideStationBounds();
@@ -510,7 +597,7 @@ namespace BossFight2D.Boss
 
         bool PlayerInsideStationBounds()
         {
-            var col = _readyStation != null ? _readyStation.GetComponent<Collider2D>() : null; 
+            var col = _readyStation != null ? _readyStation.GetComponent<Collider2D>() : null;
             if (col == null || playerTransform == null) return false;
             var b = col.bounds; var p = playerTransform.position;
             return (p.x > b.min.x && p.x < b.max.x && p.y > b.min.y && p.y < b.max.y);

@@ -10,6 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 5046599129734062058}
   - component: {fileID: 5405209767854889740}
+  - component: {fileID: -5400205628339315492}
   m_Layer: 0
   m_Name: TelegraphHit
   m_TagString: Untagged
@@ -84,3 +85,22 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_MaskInteraction: 0
   m_SpriteSortPoint: 0
+--- !u!114 &-5400205628339315492
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3006215893474466009}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 170077ba10de1e04b9008fc8c9e50d83, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  target: {fileID: 5405209767854889740}
+  baseColor: {r: 1, g: 0, b: 0, a: 0.4}
+  pulseAlphaOnly: 1
+  alphaMin: 0.184
+  alphaMax: 0.808
+  speed: 2
+  duration: 0

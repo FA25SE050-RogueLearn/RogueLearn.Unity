@@ -5,6 +5,8 @@ using System.Linq;
 using BossFight2D.Core;
 using BossFight2D.UI;
 using BossFight2D.Systems;
+using BossFight2D.Combat;
+using BossFight2D.Boss;
 using System.IO;
 
 namespace BossFight2D.Quiz
@@ -28,9 +30,19 @@ namespace BossFight2D.Quiz
         public NetworkVariable<float> RemainingTime = new NetworkVariable<float>(0f);
         public NetworkVariable<float> CurrentQuestionTimeLimit = new NetworkVariable<float>(10f);
         private NetworkVariable<int> currentQuestionIndex = new NetworkVariable<int>(-1);
+        // Replicated count of players who have toggled ready (for client-side UI like the station label)
+        public NetworkVariable<int> ReadyCount = new NetworkVariable<int>(0);
+        // Replicated total number of connected players (clients + host) for accurate ready display on clients
+        public NetworkVariable<int> TotalPlayers = new NetworkVariable<int>(0);
 
         private Dictionary<ulong, bool> playerReadyStatus = new Dictionary<ulong, bool>();
         private Dictionary<ulong, int> playerAnswers = new Dictionary<ulong, int>();
+        private bool punishTriggered = false;
+        
+        [Header("Power Play Triggering")]
+        [SerializeField] private int powerPlayStreakThreshold = 3; // Require N consecutive correct answers to trigger Power Play
+        [SerializeField] private bool consumeStreakOnActivation = true; // Reset streak when Power Play activates
+        private Dictionary<ulong, int> correctAnswerStreak = new Dictionary<ulong, int>();
 
         private void Awake()
         {
@@ -56,6 +68,8 @@ namespace BossFight2D.Quiz
                 {
                     playerReadyStatus[clientId] = false;
                 }
+                ReadyCount.Value = 0;
+                TotalPlayers.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
             }
             State.OnValueChanged += OnStateChanged;
         }
@@ -95,6 +109,8 @@ namespace BossFight2D.Quiz
                 if (RemainingTime.Value <= 0)
                 {
                     RemainingTime.Value = 0;
+                    // Notify clients about timeout to update UI/state via EventBus
+                    NotifyQuestionTimeoutClientRpc();
                     ResolveAnswers();
                 }
             }
@@ -114,6 +130,10 @@ namespace BossFight2D.Quiz
         {
             if (!IsServer) return;
             playerReadyStatus[clientId] = false;
+            correctAnswerStreak[clientId] = 0;
+            // Update counts for client-side UI
+            TotalPlayers.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
+            ReadyCount.Value = playerReadyStatus.Values.Count(v => v);
         }
 
         private void HandleClientDisconnected(ulong clientId)
@@ -121,6 +141,10 @@ namespace BossFight2D.Quiz
             if (!IsServer) return;
             playerReadyStatus.Remove(clientId);
             playerAnswers.Remove(clientId);
+            correctAnswerStreak.Remove(clientId);
+            // Update counts for client-side UI
+            TotalPlayers.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
+            ReadyCount.Value = playerReadyStatus.Values.Count(v => v);
             if (State.Value == QuizState.Question)
             {
                 CheckAllAnswersSubmitted();
@@ -139,6 +163,8 @@ namespace BossFight2D.Quiz
         {
             if (!IsServer) return;
             playerReadyStatus[clientId] = isReady;
+            // Update replicated ReadyCount for client-side UI
+            ReadyCount.Value = playerReadyStatus.Values.Count(v => v);
             CheckAllPlayersReady();
         }
 
@@ -167,6 +193,7 @@ namespace BossFight2D.Quiz
             }
 
             playerAnswers.Clear();
+            punishTriggered = false;
             State.Value = QuizState.Question;
             currentQuestionIndex.Value = (currentQuestionIndex.Value + 1) % questions.Count;
 
@@ -188,21 +215,34 @@ namespace BossFight2D.Quiz
         [ClientRpc]
         private void ShowQuestionClientRpc(QuestionPayload payload)
         {
-            if (QuestionPanelController.Instance != null)
+            // Ensure a QuestionPanel exists on each client; instantiate from Resources if missing
+            var panel = QuestionPanelController.Instance;
+            if (panel == null)
             {
-                var options = new string[payload.OptionsCount];
-                if (payload.OptionsCount > 0) options[0] = payload.Option1.ToString();
-                if (payload.OptionsCount > 1) options[1] = payload.Option2.ToString();
-                if (payload.OptionsCount > 2) options[2] = payload.Option3.ToString();
-                if (payload.OptionsCount > 3) options[3] = payload.Option4.ToString();
+                var prefab = Resources.Load<GameObject>("QuestionPanel");
+                if (prefab != null)
+                {
+                    var go = GameObject.Instantiate(prefab);
+                    panel = QuestionPanelController.Instance ?? go.GetComponent<QuestionPanelController>();
+                }
+                else
+                {
+                    Debug.LogError("QuestionPanel prefab not found in Resources. Please place Assets/Prefabs/QuestionPanel.prefab under Assets/Resources/ as 'QuestionPanel'.");
+                    return;
+                }
+            }
 
-                QuestionData questionData = new QuestionData() { prompt = payload.Prompt.ToString(), options = options };
-                QuestionPanelController.Instance.ShowQuestion(questionData);
-            }
-            else
-            {
-                Debug.LogError("QuestionPanelController not found in the scene.");
-            }
+            var options = new string[payload.OptionsCount];
+            if (payload.OptionsCount > 0) options[0] = payload.Option1.ToString();
+            if (payload.OptionsCount > 1) options[1] = payload.Option2.ToString();
+            if (payload.OptionsCount > 2) options[2] = payload.Option3.ToString();
+            if (payload.OptionsCount > 3) options[3] = payload.Option4.ToString();
+
+            QuestionData questionData = new QuestionData() { prompt = payload.Prompt.ToString(), options = options };
+            panel.ShowQuestion(questionData);
+
+            // Raise event for systems that rely on EventBus (WebBridge, PlayerQuestionGuard, etc.)
+            EventBus.RaiseQuestionStarted(questionData);
         }
 
         [ClientRpc]
@@ -219,6 +259,35 @@ namespace BossFight2D.Quiz
             if (!IsServer || State.Value != QuizState.Question) return;
 
             playerAnswers[playerId] = answerIndex;
+
+            // Resolve this player's answer immediately for client-side feedback
+            var question = questions[currentQuestionIndex.Value];
+            int correctIndex = question.correctIndex;
+            bool isCorrect = answerIndex == correctIndex;
+
+            // Apply combat effects server-side
+            if (isCorrect)
+            {
+                CombatResolver.ApplyAnswerDamage(question, this);
+            }
+            else if (!punishTriggered)
+            {
+                // Trigger wrong-answer punish flow once per question
+                var boss = Object.FindFirstObjectByType<BossStateMachine>();
+                if (boss != null)
+                {
+                    boss.OnWrongAnswer();
+                }
+                punishTriggered = true;
+            }
+
+            // Notify the answering client about resolution and raise AnswerSubmitted on that client
+            var targets = new ClientRpcParams
+            {
+                Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { playerId } }
+            };
+            AnswerResolutionClientRpc(answerIndex, isCorrect, correctIndex, targets);
+
             CheckAllAnswersSubmitted();
         }
 
@@ -248,14 +317,30 @@ namespace BossFight2D.Quiz
                     if (playerCombat != null)
                     {
                         playerCombat.AwardCharges();
-                        powerPlayPlayerId = client.ClientId;
+                        int streak = 0;
+                        correctAnswerStreak.TryGetValue(client.ClientId, out streak);
+                        streak++;
+                        correctAnswerStreak[client.ClientId] = streak;
+                        if (streak >= powerPlayStreakThreshold && !powerPlayPlayerId.HasValue)
+                        {
+                            powerPlayPlayerId = client.ClientId;
+                        }
                     }
+                }
+                else
+                {
+                    // Break the streak on incorrect or no answer
+                    correctAnswerStreak[client.ClientId] = 0;
                 }
             }
 
             if (powerPlayPlayerId.HasValue)
             {
                 PowerPlayManager.Instance.StartPowerPlay(powerPlayPlayerId.Value);
+                if (consumeStreakOnActivation)
+                {
+                    correctAnswerStreak[powerPlayPlayerId.Value] = 0;
+                }
             }
 
             ResetForNextRound();
@@ -269,6 +354,7 @@ namespace BossFight2D.Quiz
             {
                 playerReadyStatus[id] = false;
             }
+            ReadyCount.Value = 0;
         }
 
         public void EndPowerPlayAndStartNextQuestion()
@@ -277,6 +363,41 @@ namespace BossFight2D.Quiz
 
             ResetForNextRound();
             StartQuiz();
+        }
+
+        [ClientRpc]
+        private void AnswerResolutionClientRpc(int selectedIndex, bool isCorrect, int correctIndex, ClientRpcParams clientRpcParams = default)
+        {
+            // Raise client-side event for systems like WebBridge and PlayerQuestionGuard
+            EventBus.RaiseAnswerSubmitted(selectedIndex, isCorrect);
+
+            // Drive UI resolution feedback on the answering player's client
+            if (QuestionPanelController.Instance != null)
+            {
+                QuestionPanelController.Instance.ShowResolution(selectedIndex, isCorrect, correctIndex);
+            }
+        }
+
+        [ClientRpc]
+        private void NotifyQuestionTimeoutClientRpc()
+        {
+            EventBus.RaiseQuestionTimeout();
+        }
+
+        // Allow clients (including host) to submit answers via RPC so UI clicks are fully networked
+        [ServerRpc(RequireOwnership = false)]
+        public void SubmitAnswerServerRpc(int answerIndex, ServerRpcParams rpcParams = default)
+        {
+            // Guard: only accept during the question phase
+            if (State.Value != QuizState.Question) return;
+            var senderId = rpcParams.Receive.SenderClientId;
+            SubmitAnswer(senderId, answerIndex);
+        }
+
+        // Expose per-player ready for station/UI helpers
+        public bool IsPlayerReady(ulong clientId)
+        {
+            return playerReadyStatus.TryGetValue(clientId, out var ready) && ready;
         }
     }
 }

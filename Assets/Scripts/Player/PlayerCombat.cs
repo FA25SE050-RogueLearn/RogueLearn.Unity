@@ -172,6 +172,15 @@ namespace BossFight2D.Player
             }
         }
 
+        // Instantly fills the player's attack charges to max on the server (used by Power Play)
+        public void FillChargesToMax()
+        {
+            if (IsServer)
+            {
+                attackCharges.Value = maxAttackCharges;
+            }
+        }
+
         void UpdateChargesUI()
         {
             if (chargesUIPlaceholder == null) return;
