@@ -1,0 +1,14 @@
+.git
+.gitignore
+.vscode
+.vs
+.gradle
+Library/
+Temp/
+Obj/
+Logs/
+Assets/
+Packages/
+ProjectSettings/
+Build/**
+!Build/LinuxServer/**
