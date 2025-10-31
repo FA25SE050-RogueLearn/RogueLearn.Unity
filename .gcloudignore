@@ -1,0 +1,14 @@
+Library/
+Logs/
+Temp/
+Obj/
+UserSettings/
+.vs/
+.gradle
+Assets/
+Packages/
+ProjectSettings/
+.git
+.gitignore
+.gitattributes
+!Build/LinuxServer/**
