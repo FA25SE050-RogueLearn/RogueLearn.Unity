@@ -1,5 +1,6 @@
-- steps:
+steps:
+
 - name: gcr.io/cloud-builders/docker
   args: ["build", "-f", "docker/HeadlessServer.Dockerfile", "-t", "${_IMAGE}", "."]
-- images:
+  images:
 - "${_IMAGE}"
