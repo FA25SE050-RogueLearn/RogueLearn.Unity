@@ -1,42 +1,44 @@
-# Runtime image for the Unity headless (Server Build) with Relay host.
-# Assumes you have built a Linux headless player into Build/LinuxServer/.
-
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y \
-    libglib2.0-0 \
-    libxext6 \
-    libxrandr2 \
-    libxi6 \
-    libxcursor1 \
-    libxinerama1 \
-    libnss3 \
-    libasound2 \
-    ca-certificates \
-    python3 \
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libglib2.0-0 libxext6 libxrandr2 libxi6 libxcursor1 libxinerama1 libnss3 libasound2 ca-certificates python3 dos2unix && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the built Linux headless player (adjust paths to your actual build output)
+# Copy the built Linux headless player
 COPY Build/LinuxServer/ /app/
 
 # Copy the startup script (health server + unity)
 COPY docker/start.sh /app/start.sh
 
-#Ensure executables are runnable
-RUN chmod +x /app/BossFight2D.x86_64 && chmod +x /app/start.sh
+# Normalize line endings and ensure executables are runnable
+RUN dos2unix /app/start.sh && chmod +x /app/start.sh && chmod +x /app/BossFight2D.x86_64
 
-#Cloud Run expects an http server on $PORT
+# Cloud Run expects an HTTP server on $PORT
 EXPOSE 8080
 
-#Start the health server and Unity
-CMD ["/app/start.sh"]
+# Run via /bin/sh to avoid shebang/encoding issues
+CMD ["/bin/sh","-c","/app/start.sh"]
 
-# # Optional environment variables to control server bootstrap
-# ENV UNITY_SERVER_SCENE=HostUI \
-#     RELAY_REGION=asia-southeast1 \
-#     RL_MAX_CONNECTIONS=20
+Update docker/start.sh to include explicit binding on 0.0.0.0
+Ensure the first line is exactly #!/bin/sh, with no BOM, and the file uses LF line endings. Use this content:
 
-# # Stream logs to stdout; Unity supports "-logfile -" to pipe logs out
-# CMD ["/app/BossFight2D.x86_64", "-batchmode", "-nographics", "-logfile", "-"]
+#!/bin/sh
+set -e
+
+PORT="${PORT:-8080}"
+
+# Start a minimal HTTP server for Cloud Run health/readiness checks
+# Bind to 0.0.0.0 so Cloud Run can reach it
+python3 -m http.server "$PORT" --bind 0.0.0.0 --directory /tmp &
+HTTP_PID=$!
+
+cleanup() {
+kill "$HTTP_PID" 2>/dev/null || true
+}
+trap cleanup TERM INT
+
+# Ensure the Unity binary is executable (extra safety)
+chmod +x /app/BossFight2D.x86_64
+
+# Run Unity headless; logs go to stdout (Cloud Run logs)
+exec /app/BossFight2D.x86_64 -batchmode -nographics -logFile /dev/stdout
