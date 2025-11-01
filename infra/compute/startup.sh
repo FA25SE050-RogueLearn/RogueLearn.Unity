@@ -1,10 +1,10 @@
-#!/bin/bash
+﻿#!/bin/bash
 set -euxo pipefail
 
 # Helper to read instance metadata attributes with optional default
 get_md() {
 local key="$1"; local default_val="${2:-}"
-local url=" http://metadata.google.internal/computeMetadata/v1/instance/attributes/ ${key} "
+local url="http://metadata.google.internal/computeMetadata/v1/instance/attributes/${key}"
 if val=$(curl -sf -H "Metadata-Flavor: Google" "$url"); then
 echo "$val"
 else
@@ -46,7 +46,7 @@ if docker ps -a --format '{{.Names}}' | grep -q '^unity-server$'; then
 docker rm -f unity-server || true
 fi
 
-# Login to Artifact Registry using VM’s service account token (no gcloud needed)
+# Login to Artifact Registry using VMs service account token (no gcloud needed)
 REG_HOST="$(echo "$IMAGE" | cut -d/ -f1)"  # e.g., asia-southeast1-docker.pkg.dev
 TOKEN="$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | jq -r '.access_token')"
 docker login -u oauth2accesstoken -p "$TOKEN" "https://${REG_HOST}"
@@ -55,8 +55,9 @@ docker login -u oauth2accesstoken -p "$TOKEN" "https://${REG_HOST}"
 docker pull "${IMAGE}" || true
 
 # Run the container
-docker run --name unity-server --restart=always -p 8080:8080 -e UNITY_SERVER_SCENE="${UNITY_SERVER_SCENE}" -e RELAY_REGION="${RELAY_REGION}" -e RL_MAX_CONNECTIONS="${RL_MAX_CONNECTIONS}" -e RESULTS_SINK="${RESULTS_SINK}" -e RESULTS_LOG_ROOT="${RESULTS_LOG_ROOT}" -e RESULTS_HTTP_URL="${RESULTS_HTTP_URL}" -e RESULTS_HTTP_TOKEN="${RESULTS_HTTP_TOKEN}" -v /var/log/unity:/var/log/unity "${IMAGE}"
+docker run --name unity-server --restart=always -d -p 8080:8080 -e UNITY_SERVER_SCENE="${UNITY_SERVER_SCENE}" -e RELAY_REGION="${RELAY_REGION}" -e RL_MAX_CONNECTIONS="${RL_MAX_CONNECTIONS}" -e RESULTS_SINK="${RESULTS_SINK}" -e RESULTS_LOG_ROOT="${RESULTS_LOG_ROOT}" -e RESULTS_HTTP_URL="${RESULTS_HTTP_URL}" -e RESULTS_HTTP_TOKEN="${RESULTS_HTTP_TOKEN}" -v /var/log/unity:/var/log/unity "${IMAGE}"
 
 echo "[startup] Container launched: unity-server"
-echo "[startup] Health probe: http://34.143.247.143:8080/health"
+echo "[startup] Health probe: http://34.143.247.143:8080/healthz"
 echo "[startup] Match results will be written under ${RESULTS_LOG_ROOT} (file sink)"
+

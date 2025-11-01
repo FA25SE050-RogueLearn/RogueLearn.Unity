@@ -1,4 +1,4 @@
-// Headless server bootstrap for dedicated server runs.
+﻿// Headless server bootstrap for dedicated server runs.
 // Previously wrapped in UNITY_SERVER, but we make it safe to include in all builds
 // and only execute in batch/headless mode. This ensures Dockerized headless builds
 // still start the server even if UNITY_SERVER is not defined at build time.
@@ -13,6 +13,7 @@ using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using Unity.Networking.Transport.Relay;
 using UnityEngine.SceneManagement;
+using BossFight2D.Systems;
 
 namespace BossFight2D.Network
 {
@@ -39,7 +40,7 @@ namespace BossFight2D.Network
                 // Optionally force-load a server scene that contains NetworkManager.
                 // You can override via env var UNITY_SERVER_SCENE; defaults to HostUI.
                 string serverScene = Environment.GetEnvironmentVariable("UNITY_SERVER_SCENE");
-                if (string.IsNullOrWhiteSpace(serverScene)) serverScene = "HostUI";
+                if (string.IsNullOrWhiteSpace(serverScene)) serverScene = "ServerHeadless";
                 Debug.Log($"[ServerBootstrap] Loading server scene: {serverScene}");
                 SceneManager.LoadScene(serverScene);
 
@@ -76,11 +77,18 @@ namespace BossFight2D.Network
                     return;
                 }
 
+                manager.NetworkConfig.EnableSceneManagement = true;
                 var transport = manager.NetworkConfig.NetworkTransport as UnityTransport;
                 if (transport == null)
                 {
-                    Debug.LogError("[ServerBootstrap] UnityTransport is not configured on NetworkManager.");
-                    return;
+                    // Try to attach UnityTransport at runtime for robustness in headless runs
+                    transport = manager.gameObject.GetComponent<UnityTransport>();
+                    if (transport == null)
+                    {
+                        transport = manager.gameObject.AddComponent<UnityTransport>();
+                        Debug.Log("[ServerBootstrap] Attached UnityTransport to NetworkManager at runtime.");
+                    }
+                    manager.NetworkConfig.NetworkTransport = transport;
                 }
 
                 // Configure Relay for the host/server path. Use DTLS for secure UDP.
@@ -99,6 +107,23 @@ namespace BossFight2D.Network
                     if (started)
                     {
                         Debug.Log("[ServerBootstrap] {\"event\":\"server_started\"}");
+                        // Ensure ServerMatchRecorder exists so match completion is logged even without scene authoring.
+                        try
+                        {
+                            var recorderGo = new GameObject("ServerMatchRecorder");
+                            GameObject.DontDestroyOnLoad(recorderGo);
+                            recorderGo.AddComponent<ServerMatchRecorder>();
+                            Debug.Log("[ServerBootstrap] ServerMatchRecorder initialized.");
+                            // Pre-create ServerAutoStartOnReady so when Gameplay loads, the quiz can auto-start when all players are ready.
+                            var autoStartGo = new GameObject("ServerAutoStartOnReady");
+                            GameObject.DontDestroyOnLoad(autoStartGo);
+                            autoStartGo.AddComponent<BossFight2D.Network.ServerAutoStartOnReady>();
+                            Debug.Log("[ServerBootstrap] ServerAutoStartOnReady initialized.");
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning($"[ServerBootstrap] Failed to initialize ServerMatchRecorder: {e.Message}");
+                        }
                     }
                 }
             }
@@ -132,3 +157,12 @@ namespace BossFight2D.Network
         }
     }
 }
+
+
+
+
+
+
+
+
+
