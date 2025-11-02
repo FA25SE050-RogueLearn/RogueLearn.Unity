@@ -1,0 +1,55 @@
+﻿name: Unity Headless CI to Artifact Registry
+
+on:
+  push:
+    branches: [ multiplayer ]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ runner.os }}-Unity-2022.3.55f1-${{ github.ref }}-${{ hashFiles('**/*.meta') }}
+          restore-keys: |
+            Library-${{ runner.os }}-Unity-2022.3.55f1-
+
+      - name: Unity - Build Linux Headless
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          unityVersion: 2022.3.55f1
+          targetPlatform: LinuxServer
+          projectPath: .
+          buildName: BossFight2D
+          buildPath: Build
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev -q
+
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/HeadlessServer.Dockerfile
+          push: true
+          tags: |
+            asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO }}/server:latest
+            asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO }}/server:${{ github.sha }}

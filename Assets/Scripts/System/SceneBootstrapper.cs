@@ -13,6 +13,7 @@ using UnityEngine.SceneManagement;
 public class SceneBootstrapper : MonoBehaviour
 {
     private static bool _spawned;
+    private static bool _lobbySetupAttempted;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Init()
@@ -32,6 +33,8 @@ public class SceneBootstrapper : MonoBehaviour
         {
             return;
         }
+        // Setup lobby UI/state when HostUI is active
+        TrySetupLobby(sceneName);
         // If this scene contains a Main Menu, avoid spawning gameplay systems
         var isMainMenu = FindFirstObjectByType<BossFight2D.UI.MainMenuUI>() != null;
         if (isMainMenu)
@@ -50,6 +53,51 @@ public class SceneBootstrapper : MonoBehaviour
         // EnsureReadyStation(player);
         // Start is gated by ReadyStation; do not auto-start here.
         // The game will transition from Init to Playing when the player marks Ready at the station.
+    }
+
+    private void OnEnable()
+    {
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    private void OnDisable()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        TrySetupLobby(scene.name);
+    }
+
+    private void TrySetupLobby(string sceneName)
+    {
+        if (_lobbySetupAttempted && SceneManager.GetActiveScene().name == sceneName) return;
+        if (sceneName == "ServerHeadless" || sceneName == "ClientUI")
+        {
+            // Server: ensure a LobbyStateManager network object exists
+            var nm = Unity.Netcode.NetworkManager.Singleton;
+            if (nm != null && nm.IsServer)
+            {
+                var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
+                if (lobby == null)
+                {
+                    var go = new GameObject("LobbyStateManager");
+                    var no = go.AddComponent<Unity.Netcode.NetworkObject>();
+                    lobby = go.AddComponent<BossFight2D.Network.LobbyStateManager>();
+                    no.Spawn(true);
+                }
+            }
+
+            // Clients: ensure a simple LobbyUI overlay exists
+            if (FindFirstObjectByType<LobbyUI>() == null)
+            {
+                var uiGo = new GameObject("LobbyUI");
+                uiGo.AddComponent<LobbyUI>();
+            }
+
+            _lobbySetupAttempted = true;
+        }
     }
 
     private void EnsureSystems()

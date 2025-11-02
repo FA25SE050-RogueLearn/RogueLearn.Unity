@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using UnityEngine;
 using Unity.Netcode;
 using UnityEngine.SceneManagement;
@@ -62,9 +62,12 @@ namespace BossFight2D.Network
 
                 if (qm == null)
                 {
-                    if (autoLoadGameplayIfMissingQuizManager && !_gameplayLoadTriggered && nm.IsListening && nm.ConnectedClientsIds != null && nm.ConnectedClientsIds.Count > 0 && nm.SceneManager != null)
+                    // Only auto-load Gameplay from the ServerHeadless scene.
+                    // In HostUI/Lobby we want players to ready up and let lobby logic transition.
+                    var active = SceneManager.GetActiveScene().name;
+                    var canAutoLoadFromHeadless = string.Equals(active, "ServerHeadless", System.StringComparison.OrdinalIgnoreCase);
+                    if (canAutoLoadFromHeadless && autoLoadGameplayIfMissingQuizManager && !_gameplayLoadTriggered && nm.IsListening && nm.ConnectedClientsIds != null && nm.ConnectedClientsIds.Count > 0 && nm.SceneManager != null)
                     {
-                        var active = SceneManager.GetActiveScene().name;
                         if (!string.Equals(active, targetSceneName))
                         {
                             Debug.Log($"[ServerAutoStartOnReady] Loading '{targetSceneName}' for all clients (active='{active}').");
@@ -84,6 +87,12 @@ namespace BossFight2D.Network
                         {
                             foreach (var id in ids)
                             {
+                                // In headless mode, the server runs as Host to bind Relay but is not a playable client.
+                                // Skip auto-readying the server/host client to avoid mismatched counts.
+                                if (Application.isBatchMode && nm.IsHost && id == NetworkManager.ServerClientId)
+                                {
+                                    continue;
+                                }
                                 if (!qm.IsPlayerReady(id))
                                 {
                                     qm.PlayerReadyChanged(id, true);

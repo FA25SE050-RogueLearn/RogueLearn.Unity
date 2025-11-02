@@ -35,6 +35,32 @@ namespace BossFight2D.Quiz
         // Replicated total number of connected players (clients + host) for accurate ready display on clients
         public NetworkVariable<int> TotalPlayers = new NetworkVariable<int>(0);
 
+        // Dedicated/headless server runs as Host to bind Relay, but the server is not a playable client.
+        // In that mode, exclude the server/host from player counts and readiness requirements.
+        private bool ExcludeServerFromPlayerCounts => Application.isBatchMode && NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost;
+
+        private int GetTotalPlayableClients()
+        {
+            var nm = NetworkManager.Singleton;
+            if (nm == null || nm.ConnectedClientsIds == null) return 0;
+            if (ExcludeServerFromPlayerCounts)
+            {
+                return nm.ConnectedClientsIds.Count(id => id != NetworkManager.ServerClientId);
+            }
+            return nm.ConnectedClientsIds.Count;
+        }
+
+        private int GetReadyPlayableClients()
+        {
+            var nm = NetworkManager.Singleton;
+            if (nm == null) return 0;
+            if (ExcludeServerFromPlayerCounts)
+            {
+                return playerReadyStatus.Where(kv => kv.Key != NetworkManager.ServerClientId && kv.Value).Count();
+            }
+            return playerReadyStatus.Values.Count(v => v);
+        }
+
         private Dictionary<ulong, bool> playerReadyStatus = new Dictionary<ulong, bool>();
         private Dictionary<ulong, int> playerAnswers = new Dictionary<ulong, int>();
         private bool punishTriggered = false;
@@ -66,10 +92,12 @@ namespace BossFight2D.Quiz
 
                 foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
                 {
+                    // Skip the server/host client in headless mode
+                    if (ExcludeServerFromPlayerCounts && clientId == NetworkManager.ServerClientId) continue;
                     playerReadyStatus[clientId] = false;
                 }
                 ReadyCount.Value = 0;
-                TotalPlayers.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
+                TotalPlayers.Value = GetTotalPlayableClients();
             }
             State.OnValueChanged += OnStateChanged;
         }
@@ -129,11 +157,18 @@ namespace BossFight2D.Quiz
         private void HandleClientConnected(ulong clientId)
         {
             if (!IsServer) return;
+            // Skip the server/host client in headless mode
+            if (ExcludeServerFromPlayerCounts && clientId == NetworkManager.ServerClientId)
+            {
+                TotalPlayers.Value = GetTotalPlayableClients();
+                ReadyCount.Value = GetReadyPlayableClients();
+                return;
+            }
             playerReadyStatus[clientId] = false;
             correctAnswerStreak[clientId] = 0;
             // Update counts for client-side UI
-            TotalPlayers.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
-            ReadyCount.Value = playerReadyStatus.Values.Count(v => v);
+            TotalPlayers.Value = GetTotalPlayableClients();
+            ReadyCount.Value = GetReadyPlayableClients();
         }
 
         private void HandleClientDisconnected(ulong clientId)
@@ -143,8 +178,8 @@ namespace BossFight2D.Quiz
             playerAnswers.Remove(clientId);
             correctAnswerStreak.Remove(clientId);
             // Update counts for client-side UI
-            TotalPlayers.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
-            ReadyCount.Value = playerReadyStatus.Values.Count(v => v);
+            TotalPlayers.Value = GetTotalPlayableClients();
+            ReadyCount.Value = GetReadyPlayableClients();
             if (State.Value == QuizState.Question)
             {
                 CheckAllAnswersSubmitted();
@@ -162,9 +197,14 @@ namespace BossFight2D.Quiz
         public void PlayerReadyChanged(ulong clientId, bool isReady)
         {
             if (!IsServer) return;
+            // Skip the server/host client in headless mode
+            if (ExcludeServerFromPlayerCounts && clientId == NetworkManager.ServerClientId)
+            {
+                return;
+            }
             playerReadyStatus[clientId] = isReady;
             // Update replicated ReadyCount for client-side UI
-            ReadyCount.Value = playerReadyStatus.Values.Count(v => v);
+            ReadyCount.Value = GetReadyPlayableClients();
             CheckAllPlayersReady();
         }
 
@@ -172,9 +212,16 @@ namespace BossFight2D.Quiz
         {
             if (!IsServer || State.Value != QuizState.Idle) return;
 
-            foreach (var client in NetworkManager.Singleton.ConnectedClients.Values)
+            var nm = NetworkManager.Singleton;
+            foreach (var client in nm.ConnectedClients.Values)
             {
-                if (!playerReadyStatus.ContainsKey(client.ClientId) || !playerReadyStatus[client.ClientId])
+                // Skip the server/host client in headless mode
+                if (ExcludeServerFromPlayerCounts && client.ClientId == NetworkManager.ServerClientId)
+                {
+                    continue;
+                }
+
+                if (!playerReadyStatus.TryGetValue(client.ClientId, out var isReady) || !isReady)
                 {
                     return;
                 }
@@ -293,7 +340,14 @@ namespace BossFight2D.Quiz
 
         private void CheckAllAnswersSubmitted()
         {
-            if (playerAnswers.Count >= NetworkManager.Singleton.ConnectedClients.Count)
+            var nm = NetworkManager.Singleton;
+            int requiredCount = nm.ConnectedClients.Count;
+            if (ExcludeServerFromPlayerCounts)
+            {
+                // Exclude the server/host client in headless mode
+                requiredCount = Mathf.Max(0, requiredCount - 1);
+            }
+            if (playerAnswers.Count >= requiredCount)
             {
                 ResolveAnswers();
             }

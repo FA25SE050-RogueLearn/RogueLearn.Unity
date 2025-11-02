@@ -38,8 +38,9 @@ namespace BossFight2D.Network
             try
             {
                 // Optionally force-load a server scene that contains NetworkManager.
-                // You can override via env var UNITY_SERVER_SCENE; defaults to HostUI.
+                // You can override via env var UNITY_SERVER_SCENE; defaults to ServerHeadless.
                 string serverScene = Environment.GetEnvironmentVariable("UNITY_SERVER_SCENE");
+                // Default to ServerHeadless so host stays in server-only scene; clients will show lobby UI overlay.
                 if (string.IsNullOrWhiteSpace(serverScene)) serverScene = "ServerHeadless";
                 Debug.Log($"[ServerBootstrap] Loading server scene: {serverScene}");
                 SceneManager.LoadScene(serverScene);
@@ -119,6 +120,16 @@ namespace BossFight2D.Network
                             GameObject.DontDestroyOnLoad(autoStartGo);
                             autoStartGo.AddComponent<BossFight2D.Network.ServerAutoStartOnReady>();
                             Debug.Log("[ServerBootstrap] ServerAutoStartOnReady initialized.");
+
+                            // Create LobbyStateManager on server to track readiness and broadcast join code to clients
+                            var lobbyGo = new GameObject("LobbyStateManager");
+                            GameObject.DontDestroyOnLoad(lobbyGo);
+                            var no = lobbyGo.AddComponent<NetworkObject>();
+                            var lobby = lobbyGo.AddComponent<LobbyStateManager>();
+                            no.Spawn(true);
+                            // Publish the Relay join code so the host can share it and clients can see it
+                            lobby.SetJoinCode(joinCode);
+                            Debug.Log("[ServerBootstrap] LobbyStateManager spawned and join code broadcasted.");
                         }
                         catch (Exception e)
                         {
