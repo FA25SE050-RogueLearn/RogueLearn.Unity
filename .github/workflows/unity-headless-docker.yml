@@ -25,6 +25,8 @@ jobs:
       - name: Unity - Build Linux (Standalone)
         uses: game-ci/unity-builder@v4
         env:
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         with:
           unityVersion: 2022.3.55f1
