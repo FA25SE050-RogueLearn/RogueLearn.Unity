@@ -11,7 +11,7 @@ COPY build/StandaloneLinux64/ /app/
 COPY docker/start.sh /app/start.sh
 
 # Normalize line endings and ensure executables are runnable
-RUN dos2unix /app/start.sh && chmod +x /app/start.sh && chmod +x /app/BossFight2D.x86_64
+RUN dos2unix /app/start.sh && chmod +x /app/start.sh
 
 # Cloud Run expects an HTTP server on $PORT
 EXPOSE 8080
