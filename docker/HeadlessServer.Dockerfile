@@ -4,8 +4,8 @@ RUN apt-get update && apt-get install -y libglib2.0-0 libxext6 libxrandr2 libxi6
 
 WORKDIR /app
 
-# Copy the built Linux headless player
-COPY build/LinuxServer/ /app/
+# Copy the built Linux player (Standalone)
+COPY build/StandaloneLinux64/ /app/
 
 # Copy the startup script (health server + unity)
 COPY docker/start.sh /app/start.sh

@@ -35,6 +35,15 @@ jobs:
           buildName: BossFight2D
           buildPath: build
 
+      - name: List build outputs (debug)
+        run: |
+          echo "Showing build directory contents:" 
+          ls -la build || true
+          echo "Showing StandaloneLinux64 contents:" 
+          ls -la build/StandaloneLinux64 || true
+          echo "Top-level files under build (maxdepth=2):"
+          find build -maxdepth 2 -type f | head -n 50 || true
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:

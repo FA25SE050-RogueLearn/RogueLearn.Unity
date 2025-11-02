@@ -12,3 +12,4 @@ ProjectSettings/
 .gitignore
 .gitattributes
 !build/LinuxServer/**
+!build/StandaloneLinux64/**
