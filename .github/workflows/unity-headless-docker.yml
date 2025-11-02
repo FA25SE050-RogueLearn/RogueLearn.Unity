@@ -1,4 +1,4 @@
-﻿name: Unity Headless CI to Artifact Registry
+name: Unity Headless CI to Artifact Registry
 
 on:
   push:
@@ -22,13 +22,13 @@ jobs:
           restore-keys: |
             Library-${{ runner.os }}-Unity-2022.3.55f1-
 
-      - name: Unity - Build Linux Headless
+      - name: Unity - Build Linux (Standalone)
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         with:
           unityVersion: 2022.3.55f1
-          targetPlatform: LinuxServer
+          targetPlatform: StandaloneLinux64
           projectPath: .
           buildName: BossFight2D
           buildPath: Build

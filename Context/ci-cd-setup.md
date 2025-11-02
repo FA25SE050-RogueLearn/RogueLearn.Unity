@@ -1,9 +1,9 @@
-﻿# RogueLearn.Unity CI/CD Setup Plan (Unity Headless + Artifact Registry + Watchtower)
+# RogueLearn.Unity CI/CD Setup Plan (Unity Headless + Artifact Registry + Watchtower)
 
 Repo: RogueLearn.Unity
 Branch: multiplayer
 Unity: 2022.3.55f1 (LTS)
-Build Target: Linux Headless (LinuxServer)
+Build Target: StandaloneLinux64 (headless runtime)
 Registry: Artifact Registry (asia-southeast1) repo: roguelearn-unity
 CD: Watchtower on VM auto-pulls server:latest and restarts unity-server
 
@@ -42,7 +42,7 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         with:
           unityVersion: 2022.3.55f1
-          targetPlatform: LinuxServer
+          targetPlatform: StandaloneLinux64
           projectPath: .
           buildName: BossFight2D
           buildPath: Build
@@ -170,7 +170,7 @@ docker run -d --name watchtower --restart=always \
 
 ## 7) Troubleshooting
 - Docker name conflict: `docker rm -f unity-server` before redeploy.
-- Build folder mismatch: Ensure GitHub Action uses `buildPath: Build` so Dockerfile `COPY Build/LinuxServer/ /app/` works.
+- Build folder mismatch: Ensure GitHub Action uses `buildPath: Build` so Dockerfile `COPY Build/StandaloneLinux64/ /app/` works.
 - Artifact Registry auth: run `gcloud auth configure-docker asia-southeast1-docker.pkg.dev` on the VM.
 - Unity license: ensure `UNITY_LICENSE` secret contains full `.ulf` contents. Unity Personal is free.
 - Port 8080 conflicts: if using an external health server, avoid binding 8080 twice; prefer HealthHttpServer inside Unity.
