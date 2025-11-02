@@ -11,4 +11,4 @@ ProjectSettings/
 .git
 .gitignore
 .gitattributes
-!Build/LinuxServer/**
+!build/LinuxServer/**

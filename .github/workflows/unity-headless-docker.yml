@@ -33,7 +33,7 @@ jobs:
           targetPlatform: StandaloneLinux64
           projectPath: .
           buildName: BossFight2D
-          buildPath: Build
+          buildPath: build
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
