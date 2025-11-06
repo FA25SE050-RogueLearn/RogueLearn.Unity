@@ -4,6 +4,8 @@ using UnityEngine.UI;
 using BossFight2D.Systems;
 using BossFight2D.Quiz;
 using Unity.Netcode;
+using BossFight2D.Player;
+using UnityEngine.EventSystems;
 
 namespace BossFight2D.UI
 {
@@ -38,6 +40,12 @@ namespace BossFight2D.UI
         [SerializeField] private float flashDuration = 0.35f;
 
         private bool isActive = false;
+        [Header("Transitions & Debug")]
+        [SerializeField] private bool useFadeTransitions = true;
+        [SerializeField] private float fadeOutDuration = 0.2f;
+        [SerializeField] private float fadeInDuration = 0.2f;
+        [SerializeField] private bool debugPanelState = true;
+        private CanvasGroup _canvasGroup;
 
         // Cache base colors to restore after flashes
         private Color baseColorA = Color.white;
@@ -106,6 +114,14 @@ namespace BossFight2D.UI
             if (answerB != null && answerB.targetGraphic != null) baseColorB = answerB.targetGraphic.color;
             if (answerC != null && answerC.targetGraphic != null) baseColorC = answerC.targetGraphic.color;
             if (answerD != null && answerD.targetGraphic != null) baseColorD = answerD.targetGraphic.color;
+
+            // Setup CanvasGroup for fade transitions
+            _canvasGroup = GetComponent<CanvasGroup>();
+            if (_canvasGroup == null && useFadeTransitions)
+            {
+                _canvasGroup = gameObject.AddComponent<CanvasGroup>();
+                _canvasGroup.alpha = 0f;
+            }
         }
 
         void Start()
@@ -115,6 +131,12 @@ namespace BossFight2D.UI
             if (answerB != null) answerB.onClick.AddListener(() => SubmitAnswer(1));
             if (answerC != null) answerC.onClick.AddListener(() => SubmitAnswer(2));
             if (answerD != null) answerD.onClick.AddListener(() => SubmitAnswer(3));
+
+            // Suppress attacks on pointer down so the click does not trigger combat before OnClick
+            SetupPointerDownSuppressor(answerA);
+            SetupPointerDownSuppressor(answerB);
+            SetupPointerDownSuppressor(answerC);
+            SetupPointerDownSuppressor(answerD);
 
             // Subscribe to events
             EventBus.AdvancePromptShown += OnAdvanceShown;
@@ -167,6 +189,15 @@ namespace BossFight2D.UI
 
             isActive = true;
             gameObject.SetActive(true);
+            if (useFadeTransitions && _canvasGroup != null)
+            {
+                StopAllCoroutines();
+                StartCoroutine(FadeCanvas(1f, fadeInDuration));
+            }
+            if (debugPanelState)
+            {
+                LogPanelState("ShowQuestion");
+            }
             showAdvancePrompt = false; // hidden while a question is active
 
             // Populate question text
@@ -223,17 +254,49 @@ namespace BossFight2D.UI
 
         public void HidePanel()
         {
-            gameObject.SetActive(false);
+            // Raise AnswerModeExited to let systems re-enable input/combat appropriately
+            EventBus.RaiseAnswerModeExited();
+
+            if (debugPanelState)
+            {
+                LogPanelState("HidePanel");
+            }
+
+            if (useFadeTransitions && _canvasGroup != null && gameObject.activeSelf)
+            {
+                StopAllCoroutines();
+                StartCoroutine(FadeOutAndDeactivate());
+            }
+            else
+            {
+                gameObject.SetActive(false);
+            }
         }
 
         private void SubmitAnswer(int choice)
         {
             if (QuizManager.Instance != null && isActive)
             {
+                // Immediately suppress local player attacks for the duration of post-answer lock
+                var localCombat = FindLocalPlayerCombat();
+                if (localCombat != null)
+                {
+                    localCombat.BeginAnswerInteractionLocal();
+                }
                 // Send the answer through the network so non-host clients are handled correctly
                 QuizManager.Instance.SubmitAnswerServerRpc(choice);
                 SetButtonsInteractable(false); // Prevent multiple submissions
             }
+        }
+
+        private PlayerCombat FindLocalPlayerCombat()
+        {
+            var combats = Object.FindObjectsOfType<PlayerCombat>();
+            foreach (var pc in combats)
+            {
+                if (pc.IsOwner) return pc;
+            }
+            return null;
         }
 
         private void SetButtonsInteractable(bool interactable)
@@ -320,13 +383,38 @@ namespace BossFight2D.UI
                 Debug.LogWarning("QuestionPanelController: Timer Slider was not found. Timer UI will not update.");
             if (timerSlider != null && timerFillImage == null)
                 Debug.LogWarning("QuestionPanelController: Timer fill Image not found. Urgency coloring will be disabled.");
+
+            if (debugPanelState)
+            {
+                var canvases = GetComponentsInParent<Canvas>(true);
+                foreach (var c in canvases)
+                {
+                    Debug.Log($"[QPC] Canvas '{c.name}': renderMode={c.renderMode}, sortLayerID={c.sortingLayerID}, sortOrder={c.sortingOrder}, overrideSorting={c.overrideSorting}");
+                }
+                var ray = GetComponentInParent<UnityEngine.UI.GraphicRaycaster>();
+                Debug.Log($"[QPC] GraphicRaycaster present: {(ray != null)}; EventSystem present: {(EventSystem.current != null)}; Panel layer: {gameObject.layer}");
+                Debug.Log($"[QPC] CanvasGroup present: {(_canvasGroup != null)}; useFadeTransitions={useFadeTransitions}");
+            }
         }
 
         // Event handlers for overlays
         void OnAdvanceShown() { showAdvancePrompt = true; }
         void OnAdvanceHidden() { showAdvancePrompt = false; }
-        void OnPowerPlayStarted(float duration) { showPowerPlayBanner = true; powerPlayEndTime = Time.time + duration; }
-        void OnPowerPlayEnded() { showPowerPlayBanner = false; }
+        void OnPowerPlayStarted(float duration)
+        {
+            showPowerPlayBanner = true; powerPlayEndTime = Time.time + duration;
+            if (debugPanelState)
+            {
+                Debug.Log($"[QPC] Power Play START (duration={duration:F2}s). Panel active={gameObject.activeSelf}, isActiveFlag={isActive}");
+            }
+            // Immediately pause question/answer interaction during Power Play
+            CancelInvoke(nameof(HidePanel));
+            SetButtonsInteractable(false);
+            isActive = false;
+            // Force immediate hide to avoid any fade-in/out race conditions
+            ImmediateHidePanel();
+        }
+        void OnPowerPlayEnded() { showPowerPlayBanner = false; if (debugPanelState) Debug.Log("[QPC] Power Play END."); }
 
         void OnGUI()
         {
@@ -346,6 +434,81 @@ namespace BossFight2D.UI
                 string txt = $"POWER PLAY! First Hit Bonus – {Mathf.CeilToInt(remaining)}s";
                 var style2 = new GUIStyle(GUI.skin.box); style2.fontSize = 18; style2.alignment = TextAnchor.UpperCenter;
                 GUI.Box(new Rect(Screen.width / 2 - 180, 10, 360, 28), txt, style2);
+            }
+        }
+
+        private System.Collections.IEnumerator FadeOutAndDeactivate()
+        {
+            yield return FadeCanvas(0f, fadeOutDuration);
+            gameObject.SetActive(false);
+        }
+
+        private System.Collections.IEnumerator FadeCanvas(float targetAlpha, float duration)
+        {
+            if (_canvasGroup == null)
+            {
+                yield break;
+            }
+            float start = _canvasGroup.alpha;
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.unscaledDeltaTime;
+                float a = Mathf.Lerp(start, targetAlpha, duration > 0f ? (t / duration) : 1f);
+                _canvasGroup.alpha = a;
+                yield return null;
+            }
+            _canvasGroup.alpha = targetAlpha;
+        }
+
+        private void LogPanelState(string context)
+        {
+            Debug.Log($"[QPC] {context}: activeSelf={gameObject.activeSelf}, isActiveFlag={isActive}, canvasGroupAlpha={(_canvasGroup != null ? _canvasGroup.alpha : -1f)}");
+        }
+
+        private void ImmediateHidePanel()
+        {
+            // Raise exit event and hide instantly
+            EventBus.RaiseAnswerModeExited();
+            StopAllCoroutines();
+            if (_canvasGroup != null) _canvasGroup.alpha = 0f;
+            gameObject.SetActive(false);
+            if (debugPanelState)
+            {
+                LogPanelState("ImmediateHidePanel");
+            }
+        }
+
+        private void SetupPointerDownSuppressor(Button btn)
+        {
+            if (btn == null) return;
+            var trigger = btn.GetComponent<EventTrigger>();
+            if (trigger == null)
+            {
+                trigger = btn.gameObject.AddComponent<EventTrigger>();
+            }
+            // Avoid duplicate entries
+            bool hasPointerDown = false;
+            foreach (var e in trigger.triggers)
+            {
+                if (e.eventID == EventTriggerType.PointerDown) { hasPointerDown = true; break; }
+            }
+            if (!hasPointerDown)
+            {
+                var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+                entry.callback.AddListener((BaseEventData data) =>
+                {
+                    var localCombat = FindLocalPlayerCombat();
+                    if (localCombat != null)
+                    {
+                        localCombat.BeginAnswerInteractionLocal();
+                        if (debugPanelState)
+                        {
+                            Debug.Log("[QPC] PointerDown suppression: BeginAnswerInteractionLocal invoked.");
+                        }
+                    }
+                });
+                trigger.triggers.Add(entry);
             }
         }
     }

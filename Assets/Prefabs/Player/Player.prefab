@@ -351,12 +351,17 @@ MonoBehaviour:
   animator: {fileID: 7755899389646713349}
   defaultDamage: 5
   attackCooldown: 0.5
+  alignHitboxToFacing: 1
+  hitboxForwardOffset: 0.6
+  hitboxUpOffset: 0
   attackCharges:
     m_InternalValue: 0
   maxAttackCharges: 3
   chargesPerCorrect: 1
   chargeCostPerAttack: 1
   chargesUIPlaceholder: {fileID: 0}
+  blockAttacksDuringQuestion: 1
+  postAnswerAttackLockSeconds: 1.25
 --- !u!95 &7755899389646713349
 Animator:
   serializedVersion: 5

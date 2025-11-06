@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine.Networking;
+using BossFight2D.Quiz;
 
 namespace BossFight2D.Systems
 {
@@ -13,7 +14,7 @@ namespace BossFight2D.Systems
 
 
         public QuestionPackData Pack;
-        
+
         public NetworkVariable<int> CurrentIndex = new NetworkVariable<int>(-1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
         public NetworkVariable<float> RemainingTime = new NetworkVariable<float>(0f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -24,6 +25,14 @@ namespace BossFight2D.Systems
 
         private void Awake()
         {
+            // Auto-disable legacy manager if QuizManager exists in the scene
+            var qm = QuizManager.Instance ?? UnityEngine.Object.FindFirstObjectByType<QuizManager>();
+            if (qm != null)
+            {
+                Debug.Log("[QuestionManager_Server] QuizManager detected; disabling legacy QuestionManager_Server to avoid conflicts. Please remove this component from the scene.");
+                enabled = false;
+                return;
+            }
             if (Singleton != null && Singleton != this)
             {
                 Destroy(gameObject);
@@ -37,6 +46,7 @@ namespace BossFight2D.Systems
 
         public override void OnNetworkSpawn()
         {
+            if (!enabled) return; // disabled due to QuizManager presence
             if (!IsServer)
             {
                 enabled = false;
@@ -120,11 +130,11 @@ namespace BossFight2D.Systems
             if (Pack == null || Pack.questions == null) { Debug.LogError("Question pack not loaded."); return; }
 
             CurrentIndex.Value++;
-            if (CurrentIndex.Value >= Pack.questions.Count) 
-            { 
+            if (CurrentIndex.Value >= Pack.questions.Count)
+            {
                 Debug.Log("End of questions.");
                 isQuestionActive.Value = false;
-                return; 
+                return;
             }
 
             var q = Pack.questions[CurrentIndex.Value];
@@ -159,11 +169,11 @@ namespace BossFight2D.Systems
                 yield return null;
             }
 
-            if (!isQuestionActive.Value) yield break; 
+            if (!isQuestionActive.Value) yield break;
 
             Debug.Log("Server: Question timed out.");
             isQuestionActive.Value = false;
-            
+
             var q = Pack.questions[CurrentIndex.Value];
             StartCoroutine(RevealAndProceed(q.correctIndex, 2.0f));
         }
@@ -193,7 +203,26 @@ namespace BossFight2D.Systems
             };
             questionManager_Client.ShowAnswerResultClientRpc(isCorrect, q.correctIndex, answerIndex, clientRpcParams);
 
-            StartCoroutine(RevealAndProceed(q.correctIndex, 1.5f));
+            // If correct, trigger Power Play and let PowerPlayManager/QuizManager drive the next question.
+            // Otherwise, proceed to reveal and continue.
+            if (isCorrect)
+            {
+                var ppm = BossFight2D.Core.PowerPlayManager.Instance;
+                if (ppm != null)
+                {
+                    ppm.StartPowerPlay(clientId);
+                    // Do not immediately proceed; QuizManager will start the next question after Power Play ends.
+                }
+                else
+                {
+                    // Fallback: continue question flow if PowerPlayManager is not present
+                    StartCoroutine(RevealAndProceed(q.correctIndex, 1.5f));
+                }
+            }
+            else
+            {
+                StartCoroutine(RevealAndProceed(q.correctIndex, 1.5f));
+            }
         }
 
         private IEnumerator RevealAndProceed(int correctIndex, float delay)

@@ -16,12 +16,12 @@ public class WebBridge : MonoBehaviour
     [DllImport("__Internal")] private static extern void BMad_SendComplete(string json);
     [DllImport("__Internal")] private static extern void BMad_SendError(string json);
 #else
-    private static void BMad_SendInit(string json){ Debug.Log("[Bridge] init: "+json); }
-    private static void BMad_SendQuestion(string json){ Debug.Log("[Bridge] question: "+json); }
-    private static void BMad_SendProgress(string json){ Debug.Log("[Bridge] progress: "+json); }
-    private static void BMad_SendAnswer(string json){ Debug.Log("[Bridge] answer: "+json); }
-    private static void BMad_SendComplete(string json){ Debug.Log("[Bridge] complete: "+json); }
-    private static void BMad_SendError(string json){ Debug.LogError("[Bridge] error: "+json); }
+    private static void BMad_SendInit(string json) { Debug.Log("[Bridge] init: " + json); }
+    private static void BMad_SendQuestion(string json) { Debug.Log("[Bridge] question: " + json); }
+    private static void BMad_SendProgress(string json) { Debug.Log("[Bridge] progress: " + json); }
+    private static void BMad_SendAnswer(string json) { Debug.Log("[Bridge] answer: " + json); }
+    private static void BMad_SendComplete(string json) { Debug.Log("[Bridge] complete: " + json); }
+    private static void BMad_SendError(string json) { Debug.LogError("[Bridge] error: " + json); }
 #endif
 
     void Awake()
@@ -60,7 +60,8 @@ public class WebBridge : MonoBehaviour
 
     private void OnQuestionStarted(QuestionData q)
     {
-        var payload = new {
+        var payload = new
+        {
             id = q.id,
             prompt = q.prompt,
             a = q.options != null && q.options.Length > 0 ? q.options[0] : "",

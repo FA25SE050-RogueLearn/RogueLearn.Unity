@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.Scripting;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
@@ -17,6 +18,7 @@ namespace BossFight2D.Systems
     /// Helper for starting Host/Client via Unity Relay.
     /// Handles Unity Services init, anonymous sign-in, allocation/join, and configuring UnityTransport.
     /// </summary>
+    [Preserve]
     public class RelayConnector : MonoBehaviour
     {
         public static RelayConnector Instance { get; private set; }
@@ -35,6 +37,13 @@ namespace BossFight2D.Systems
             else { Instance = this; DontDestroyOnLoad(gameObject); }
         }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+        // This method is invoked from the WebGL page via SendMessage. The Preserve attribute prevents IL2CPP
+        // from stripping it during managed code stripping, which would otherwise cause
+        // "null function or function signature mismatch" in the browser.
+        [Preserve]
+        public void JoinWithCode(string code) { Debug.Log($"[WebGL] JoinWithCode: {code}"); _ = JoinClientWithRelayAsync(code); }
+#endif
         private async Task EnsureServicesAsync()
         {
             if (_servicesInitialized) return;
@@ -74,6 +83,20 @@ namespace BossFight2D.Systems
 
             try
             {
+                // Keep NetworkConfig consistent with clients and dedicated server: enable connection approval.
+                // For Editor/desktop hosting we approve all clients and DO create player objects.
+                nm.NetworkConfig.ConnectionApproval = true;
+                // IMPORTANT: disable NGO scene management so connecting clients remain in their current UI scene
+                // and are not forced to synchronize to the server's active scene (ServerHeadless).
+                nm.NetworkConfig.EnableSceneManagement = false;
+                nm.ConnectionApprovalCallback = (request, response) =>
+                {
+                    response.Approved = true;
+                    response.CreatePlayerObject = true;
+                    response.Pending = false;
+                };
+                Debug.Log($"[RelayConnector] Host NetworkConfig: Approval={nm.NetworkConfig.ConnectionApproval}, SceneMgmt={nm.NetworkConfig.EnableSceneManagement}");
+
                 Allocation alloc;
                 if (!string.IsNullOrWhiteSpace(preferredRegion))
                 {
@@ -103,6 +126,7 @@ namespace BossFight2D.Systems
                     OnStatus?.Invoke("Host started.");
                     OnJoinCodeGenerated?.Invoke(joinCode);
                     Debug.Log($"Relay Host started. Join Code: {joinCode}");
+                    WireNetworkDebugCallbacks(nm);
                 }
             }
             catch (RequestFailedException rfe)
@@ -129,6 +153,15 @@ namespace BossFight2D.Systems
 
             try
             {
+                // Ensure client NetworkConfig matches server expectations when joining a headless host that uses ConnectionApproval.
+                // Having mismatched NetworkConfig (e.g., server requires approval but client doesn’t) can yield
+                // "Incomplete connection request message given config" during the handshake.
+                nm.NetworkConfig.ConnectionApproval = true;
+                // Keep clients in their current UI scene during handshake; server will instruct scene changes via ClientRpc.
+                nm.NetworkConfig.EnableSceneManagement = false;
+                nm.ConnectionApprovalCallback = (request, response) => { };
+                Debug.Log($"[RelayConnector] Client NetworkConfig: Approval={nm.NetworkConfig.ConnectionApproval}, SceneMgmt={nm.NetworkConfig.EnableSceneManagement}");
+
                 JoinAllocation joinAlloc = await RelayService.Instance.JoinAllocationAsync(joinCode.Trim());
                 var transport = nm.GetComponent<UnityTransport>();
                 if (transport == null) { Debug.LogError("UnityTransport not found on NetworkManager."); OnStatus?.Invoke("UnityTransport not found."); return; }
@@ -147,6 +180,7 @@ namespace BossFight2D.Systems
                 {
                     OnStatus?.Invoke("Client started.");
                     Debug.Log("Relay Client started.");
+                    WireNetworkDebugCallbacks(nm);
                 }
             }
             catch (RequestFailedException rfe)
@@ -158,6 +192,27 @@ namespace BossFight2D.Systems
             {
                 Debug.LogError($"Unexpected error joining client with Relay: {ex.Message}");
                 OnStatus?.Invoke($"Unexpected error: {ex.Message}");
+            }
+        }
+
+        private void WireNetworkDebugCallbacks(NetworkManager nm)
+        {
+            try
+            {
+                nm.OnClientConnectedCallback += id => Debug.Log($"[RelayConnector] OnClientConnected: {id}");
+                nm.OnClientDisconnectCallback += id => Debug.Log($"[RelayConnector] OnClientDisconnected: {id}");
+                nm.OnServerStarted += () => Debug.Log("[RelayConnector] OnServerStarted");
+                if (nm.SceneManager != null)
+                {
+                    nm.SceneManager.OnLoadEventCompleted += (sceneName, mode, completed, timeouts) =>
+                        Debug.Log($"[RelayConnector] OnLoadEventCompleted: scene='{sceneName}', completed={completed?.Count ?? 0}, timedOut={timeouts?.Count ?? 0}");
+                    nm.SceneManager.OnSceneEvent += (evt) =>
+                        Debug.Log($"[RelayConnector] OnSceneEvent: type={evt.SceneEventType}, scene='{evt.SceneName}', clientId={evt.ClientId}");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[RelayConnector] Failed to wire network debug callbacks: {e.Message}");
             }
         }
     }

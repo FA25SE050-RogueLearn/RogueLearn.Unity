@@ -45,13 +45,14 @@ namespace BossFight2D.Player
 
         public override void OnNetworkSpawn()
         {
+            // Persist ONLY the local owner's player across client-side scene loads.
+            // Remote players should not be marked DontDestroyOnLoad to avoid duplicates after scene transitions.
             if (IsOwner)
             {
-                var camera = FindFirstObjectByType<CinemachineVirtualCamera>();
-                if (camera != null)
-                {
-                    camera.Follow = transform;
-                }
+                try { DontDestroyOnLoad(gameObject); } catch { }
+                SetupCameraFollow();
+                // Re-apply camera follow whenever a new scene loads on the client
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
             }
 
             networkFlipX.OnValueChanged += OnFlipXChanged;
@@ -64,6 +65,10 @@ namespace BossFight2D.Player
         {
             networkFlipX.OnValueChanged -= OnFlipXChanged;
             networkSpeed.OnValueChanged -= OnSpeedChanged;
+            if (IsOwner)
+            {
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
+            }
         }
 
         private void OnFlipXChanged(bool previousValue, bool newValue)
@@ -135,6 +140,22 @@ namespace BossFight2D.Player
             if (IsOwner) return _dashing;
             // Non-owners can guess based on observed speed
             return rb.velocity.magnitude > moveSpeed * 1.1f;
+        }
+
+        private void SetupCameraFollow()
+        {
+            var camera = FindFirstObjectByType<CinemachineVirtualCamera>();
+            if (camera != null)
+            {
+                camera.Follow = transform;
+            }
+        }
+
+        private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            if (!IsOwner) return;
+            // When transitioning to Gameplay, ensure camera follows again
+            SetupCameraFollow();
         }
 
     }

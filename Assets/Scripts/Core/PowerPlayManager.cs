@@ -2,6 +2,7 @@ using UnityEngine;
 using Unity.Netcode;
 using BossFight2D.Systems;
 using BossFight2D.Quiz;
+using System.Collections.Generic;
 
 namespace BossFight2D.Core
 {
@@ -14,6 +15,12 @@ namespace BossFight2D.Core
         public NetworkVariable<bool> IsPowerPlayActive = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
         private float _windowEndTime;
         private ulong _powerPlayPlayerId;
+        
+        [Header("Player Position Snapshot")]
+        [Tooltip("Duration for smoothly returning players to their original positions after Power Play ends.")]
+        [SerializeField] private float smoothReturnDuration = 0.75f;
+        public float SmoothMoveDuration => smoothReturnDuration;
+        private Dictionary<ulong, Vector3> _positionsAtStart = new Dictionary<ulong, Vector3>();
 
         [Header("Dependencies")]
         public Transform readyStationTransform;
@@ -43,14 +50,15 @@ namespace BossFight2D.Core
                 // Notify clients to update UI overlays and state
                 NotifyPowerPlayEndedClientRpc();
 
-                ClientRpcParams clientRpcParams = new ClientRpcParams
+                // Smoothly return all players to their original positions captured at the start of Power Play
+                foreach (var kvp in _positionsAtStart)
                 {
-                    Send = new ClientRpcSendParams
+                    var clientRpcParams = new ClientRpcParams
                     {
-                        TargetClientIds = new ulong[] { _powerPlayPlayerId }
-                    }
-                };
-                MovePlayerToReadyStationClientRpc(clientRpcParams);
+                        Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { kvp.Key } }
+                    };
+                    SmoothReturnPlayerClientRpc(kvp.Value, smoothReturnDuration, clientRpcParams);
+                }
 
                 QuizManager.Instance.EndPowerPlayAndStartNextQuestion();
             }
@@ -73,6 +81,17 @@ namespace BossFight2D.Core
                     pc.FillChargesToMax();
                 }
             }
+
+            // Snapshot all players' positions at the start of Power Play to enable smooth return afterwards
+            _positionsAtStart.Clear();
+            foreach (var c in NetworkManager.Singleton.ConnectedClients)
+            {
+                var playerObj = c.Value.PlayerObject;
+                if (playerObj != null)
+                {
+                    _positionsAtStart[c.Key] = playerObj.transform.position;
+                }
+            }
             // Notify clients to show Power Play overlay and adjust UI
             NotifyPowerPlayStartedClientRpc(windowDurationDefault);
         }
@@ -92,15 +111,15 @@ namespace BossFight2D.Core
             // Notify clients to hide overlay and restore UI
             NotifyPowerPlayEndedClientRpc();
 
-            ClientRpcParams clientRpcParams = new ClientRpcParams
+            // Smoothly return all players to their original positions captured at the start of Power Play
+            foreach (var kvp in _positionsAtStart)
             {
-                Send = new ClientRpcSendParams
+                var clientRpcParams = new ClientRpcParams
                 {
-                    TargetClientIds = new ulong[] { _powerPlayPlayerId }
-                }
-            };
-
-            MovePlayerToReadyStationClientRpc(clientRpcParams);
+                    Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { kvp.Key } }
+                };
+                SmoothReturnPlayerClientRpc(kvp.Value, smoothReturnDuration, clientRpcParams);
+            }
             QuizManager.Instance.EndPowerPlayAndStartNextQuestion();
         }
 
@@ -119,17 +138,35 @@ namespace BossFight2D.Core
 
 
         [ClientRpc]
-        private void MovePlayerToReadyStationClientRpc(ClientRpcParams clientRpcParams = default)
+        private void SmoothReturnPlayerClientRpc(Vector3 targetPosition, float duration, ClientRpcParams clientRpcParams = default)
         {
-         
-            if (readyStationTransform != null)
+            var localPlayerObj = NetworkManager.Singleton.LocalClient != null ? NetworkManager.Singleton.LocalClient.PlayerObject : null;
+            if (localPlayerObj == null) return;
+            var t = localPlayerObj.transform;
+            Instance.StartCoroutine(LerpPlayerPosition(t, targetPosition, duration));
+        }
+
+        // Public wrapper to reuse the same smoothing visual for other systems (e.g., ReadyStation ejection)
+        public void SmoothMoveLocalPlayer(Vector3 targetPosition, float duration)
+        {
+            var localPlayerObj = NetworkManager.Singleton.LocalClient != null ? NetworkManager.Singleton.LocalClient.PlayerObject : null;
+            if (localPlayerObj == null) return;
+            var t = localPlayerObj.transform;
+            StartCoroutine(LerpPlayerPosition(t, targetPosition, duration));
+        }
+
+        private System.Collections.IEnumerator LerpPlayerPosition(Transform playerTransform, Vector3 target, float duration)
+        {
+            Vector3 start = playerTransform.position;
+            float elapsed = 0f;
+            while (elapsed < duration)
             {
-                NetworkObject playerObject = NetworkManager.Singleton.LocalClient.PlayerObject;
-                if (playerObject != null)
-                {
-                    playerObject.transform.position = readyStationTransform.position;
-                }
+                elapsed += Time.deltaTime;
+                float alpha = Mathf.Clamp01(elapsed / duration);
+                playerTransform.position = Vector3.Lerp(start, target, alpha);
+                yield return null;
             }
+            playerTransform.position = target;
         }
 
         public int ModifyDamageOnBossHit(int damage)

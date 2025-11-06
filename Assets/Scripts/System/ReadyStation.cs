@@ -28,6 +28,10 @@ namespace BossFight2D.Systems
         // Server-side tracking of which players are physically inside this station
         private readonly HashSet<ulong> insidePlayers = new HashSet<ulong>();
 
+        [Header("Ejection Transition")]
+        [Tooltip("Duration of the smooth ejection move (reuses PowerPlay smoothing style).")]
+        [SerializeField] private float ejectLerpDuration = 0.75f;
+
         void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
@@ -120,11 +124,26 @@ namespace BossFight2D.Systems
                 if (IsServer)
                 {
                     insidePlayers.Add(netObj.OwnerClientId);
+                    // Auto-ready the player when they enter the station
+                    if (QuizManager.Instance != null)
+                    {
+                        QuizManager.Instance.PlayerReadyChanged(netObj.OwnerClientId, true);
+                    }
                     RefreshAutoReadyServer();
                 }
                 else
                 {
-                    EnterStationServerRpc();
+                    // Avoid ServerRpc on a non-spawned scene object when NGO scene-sync is disabled.
+                    // Forward readiness to the globally spawned LobbyStateManager instead.
+                    var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
+                    if (lobby != null && lobby.IsSpawned)
+                    {
+                        lobby.SetReadyServerRpc(true);
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[ReadyStation] LobbyStateManager not found or not spawned; cannot set ready on server.");
+                    }
                 }
             }
         }
@@ -139,24 +158,30 @@ namespace BossFight2D.Systems
                 if (IsServer)
                 {
                     insidePlayers.Remove(netObj.OwnerClientId);
+                    // Auto-unready the player when they leave the station
+                    if (QuizManager.Instance != null)
+                    {
+                        QuizManager.Instance.PlayerReadyChanged(netObj.OwnerClientId, false);
+                    }
                     RefreshAutoReadyServer();
                 }
                 else
                 {
-                    ExitStationServerRpc();
+                    var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
+                    if (lobby != null && lobby.IsSpawned)
+                    {
+                        lobby.SetReadyServerRpc(false);
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[ReadyStation] LobbyStateManager not found or not spawned; cannot clear ready on server.");
+                    }
                 }
             }
         }
 
         void Update()
         {
-            // Only clients should send the RPC based on local input
-            if (!IsClient) return;
-            if (isPlayerInside && Input.GetKeyDown(KeyCode.R))
-            {
-                ToggleReadyServerRpc();
-            }
-
             // Update station visuals/text each frame for clients based on replicated values
             UpdateVisuals(isReady.Value);
         }
@@ -195,6 +220,11 @@ namespace BossFight2D.Systems
         private void EnterStationServerRpc(ServerRpcParams rpcParams = default)
         {
             insidePlayers.Add(rpcParams.Receive.SenderClientId);
+            // Auto-ready the player when they enter the station
+            if (QuizManager.Instance != null)
+            {
+                QuizManager.Instance.PlayerReadyChanged(rpcParams.Receive.SenderClientId, true);
+            }
             RefreshAutoReadyServer();
         }
 
@@ -202,13 +232,18 @@ namespace BossFight2D.Systems
         private void ExitStationServerRpc(ServerRpcParams rpcParams = default)
         {
             insidePlayers.Remove(rpcParams.Receive.SenderClientId);
+            // Auto-unready the player when they leave the station
+            if (QuizManager.Instance != null)
+            {
+                QuizManager.Instance.PlayerReadyChanged(rpcParams.Receive.SenderClientId, false);
+            }
             RefreshAutoReadyServer();
         }
 
         private void OnAnswerSubmitted(int _, bool correct)
         {
             // If the player answered wrong while inside and ready, eject them from the station
-            if (!correct && isPlayerInside && isReady.Value)
+            if (!correct && isPlayerInside)
             {
                 if (IsServer)
                 {
@@ -216,33 +251,21 @@ namespace BossFight2D.Systems
                 }
                 else
                 {
-                    EjectPlayerServerRpc();
+                    EjectPlayerClientSide();
                 }
             }
         }
 
-        [ServerRpc(RequireOwnership = false)]
-        private void EjectPlayerServerRpc(ServerRpcParams rpcParams = default)
+        // When NGO scene management is disabled, this in-scene NetworkBehaviour might not be spawned on the server.
+        // To avoid RPC errors, perform local ejection on the client and notify the server via LobbyStateManager to clear ready.
+        private void EjectPlayerClientSide()
         {
-            DoEjectServer();
-        }
-
-        private void DoEjectServer()
-        {
-            Debug.Log("ReadyStation: Ejecting player due to wrong answer");
-            // Turn off ready state server-side
-            isReady.Value = false;
-            if (QuizManager.Instance != null && Unity.Netcode.NetworkManager.Singleton != null)
-            {
-                QuizManager.Instance.PlayerReadyChanged(Unity.Netcode.NetworkManager.Singleton.LocalClientId, false);
-            }
-
             var stationCol = GetComponent<BoxCollider2D>();
             if (stationCol == null) return;
             var center = stationCol.bounds.center;
             var ext = stationCol.bounds.extents;
 
-            // Find player and compute ejection position just outside the station bounds
+            Vector3 newPos = center + Vector3.up;
             var playerGO = GameObject.FindWithTag("Player");
             if (playerGO != null)
             {
@@ -250,27 +273,138 @@ namespace BossFight2D.Systems
                 var root = t.parent != null ? t.parent : t;
                 var pos = root.position;
                 Vector2 dir = (Vector2)(pos - center);
-                if (dir.sqrMagnitude < 0.0001f) dir = Vector2.up; // default direction if centered
+                if (dir.sqrMagnitude < 0.0001f) dir = Vector2.up;
                 dir.Normalize();
-                float margin = 0.5f;
+                float margin = 2.5f;
                 float pushDist = Mathf.Max(ext.x, ext.y) + margin;
-                Vector3 newPos = center + (Vector3)(dir * pushDist);
-                root.position = newPos;
+                newPos = center + (Vector3)(dir * pushDist);
             }
+
+            var ppm = BossFight2D.Core.PowerPlayManager.Instance;
+            float duration = ejectLerpDuration;
+            if (ppm != null)
+            {
+                duration = ppm.SmoothMoveDuration;
+                ppm.SmoothMoveLocalPlayer(newPos, duration);
+            }
+            else if (playerGO != null)
+            {
+                StartCoroutine(LocalLerpPlayerPosition(playerGO.transform, newPos, duration));
+            }
+
+            // Notify server to clear ready for this client
+            var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
+            if (lobby != null && lobby.IsSpawned)
+            {
+                lobby.SetReadyServerRpc(false);
+            }
+            isPlayerInside = false;
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void EjectPlayerServerRpc(ServerRpcParams rpcParams = default)
+        {
+            DoEjectServer(rpcParams.Receive.SenderClientId);
+        }
+
+        private void DoEjectServer(ulong? playerClientId = null)
+        {
+            Debug.Log("ReadyStation: Ejecting player due to wrong answer");
+            // Turn off ready state server-side for the answering player
+            ulong targetId = playerClientId.HasValue ? playerClientId.Value : (NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0);
+            if (QuizManager.Instance != null)
+            {
+                QuizManager.Instance.PlayerReadyChanged(targetId, false);
+            }
+
+            var stationCol = GetComponent<BoxCollider2D>();
+            if (stationCol == null) return;
+            var center = stationCol.bounds.center;
+            var ext = stationCol.bounds.extents;
+
+            // Compute ejection position just outside the station bounds
+            Vector3 newPos = center + Vector3.up; // fallback
+            {
+                var playerGO = GameObject.FindWithTag("Player");
+                if (playerGO != null)
+                {
+                    var t = playerGO.transform;
+                    var root = t.parent != null ? t.parent : t;
+                    var pos = root.position;
+                    Vector2 dir = (Vector2)(pos - center);
+                    if (dir.sqrMagnitude < 0.0001f) dir = Vector2.up; // default direction if centered
+                    dir.Normalize();
+                    float margin = 2.5f;
+                    float pushDist = Mathf.Max(ext.x, ext.y) + margin;
+                    newPos = center + (Vector3)(dir * pushDist);
+                }
+            }
+
+            // Update server-side inside tracking immediately to reflect ejection, independent of trigger exit timing
+            insidePlayers.Remove(targetId);
+
+            // Use client-side smooth movement to match established visual style (PowerPlay return)
+            var clientParams = new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { targetId } } };
+            float duration = ejectLerpDuration;
+            if (BossFight2D.Core.PowerPlayManager.Instance != null)
+            {
+                // If available, reuse the same duration configured for Power Play smoothing
+                duration = BossFight2D.Core.PowerPlayManager.Instance.SmoothMoveDuration;
+            }
+            SmoothEjectClientRpc(newPos, duration, clientParams);
 
             // Update internal flag
             isPlayerInside = false;
             Debug.Log("ReadyStation: Ejection complete");
         }
 
-        // Allow any client (not just the owner of this in-scene NetworkObject) to toggle readiness
-        [ServerRpc(RequireOwnership = false)]
-        private void ToggleReadyServerRpc(ServerRpcParams rpcParams = default)
+        [ClientRpc]
+        private void SmoothEjectClientRpc(Vector3 targetPosition, float duration, ClientRpcParams clientRpcParams = default)
         {
-            Debug.Log($"ReadyStation: ToggleReadyServerRpc called - isReady: {isReady.Value}");
-            isReady.Value = !isReady.Value;
-            QuizManager.Instance.PlayerReadyChanged(rpcParams.Receive.SenderClientId, isReady.Value);
+            // Move only the local player's object smoothly to the target position
+            var localPlayerObj = NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClient != null ? NetworkManager.Singleton.LocalClient.PlayerObject : null;
+            Transform t = null;
+            if (localPlayerObj != null)
+            {
+                t = localPlayerObj.transform;
+            }
+            else
+            {
+                var goFallback = GameObject.FindWithTag("Player");
+                if (goFallback == null) return;
+                t = goFallback.transform;
+            }
+            if (t == null) return;
+
+            // Prefer reusing PowerPlayManager's smoothing coroutine for consistent visuals
+            var ppm = BossFight2D.Core.PowerPlayManager.Instance;
+            if (ppm != null)
+            {
+                ppm.SmoothMoveLocalPlayer(targetPosition, duration);
+            }
+            else
+            {
+                // Fallback local lerp if PowerPlayManager is unavailable
+                StartCoroutine(LocalLerpPlayerPosition(t, targetPosition, duration));
+            }
         }
+
+        private System.Collections.IEnumerator LocalLerpPlayerPosition(Transform playerTransform, Vector3 target, float duration)
+        {
+            Vector3 start = playerTransform.position;
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float alpha = Mathf.Clamp01(elapsed / duration);
+                playerTransform.position = Vector3.Lerp(start, target, alpha);
+                yield return null;
+            }
+            playerTransform.position = target;
+        }
+
+        // Allow any client (not just the owner of this in-scene NetworkObject) to toggle readiness
+        // Manual toggle removed in favor of auto-ready on station enter/exit
 
         private Sprite CreateRectSprite()
         {

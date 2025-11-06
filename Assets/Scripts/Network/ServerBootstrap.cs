@@ -1,4 +1,4 @@
-﻿// Headless server bootstrap for dedicated server runs.
+// Headless server bootstrap for dedicated server runs.
 // Previously wrapped in UNITY_SERVER, but we make it safe to include in all builds
 // and only execute in batch/headless mode. This ensures Dockerized headless builds
 // still start the server even if UNITY_SERVER is not defined at build time.
@@ -78,7 +78,8 @@ namespace BossFight2D.Network
                     return;
                 }
 
-                manager.NetworkConfig.EnableSceneManagement = true;
+                // Keep dedicated server in control; clients will not auto-sync scenes.
+                manager.NetworkConfig.EnableSceneManagement = false;
                 var transport = manager.NetworkConfig.NetworkTransport as UnityTransport;
                 if (transport == null)
                 {
@@ -95,6 +96,12 @@ namespace BossFight2D.Network
                 // Configure Relay for the host/server path. Use DTLS for secure UDP.
                 var relayServerData = new RelayServerData(allocation, "dtls");
                 transport.SetRelayServerData(relayServerData);
+
+                // Ensure the dedicated server/host does NOT spawn its own Player object.
+                // We enable NGO's ConnectionApproval and instruct it to skip player creation
+                // for the server's local connection (ServerClientId) when running headless.
+                manager.NetworkConfig.ConnectionApproval = true;
+                manager.ConnectionApprovalCallback = ApproveConnectionNoHostPlayer;
 
                 // IMPORTANT: For Relay, run StartHost() even on headless.
                 // NGO StartServer() does not bind to Relay; StartHost opens the Relay host endpoint.
@@ -121,15 +128,50 @@ namespace BossFight2D.Network
                             autoStartGo.AddComponent<BossFight2D.Network.ServerAutoStartOnReady>();
                             Debug.Log("[ServerBootstrap] ServerAutoStartOnReady initialized.");
 
-                            // Create LobbyStateManager on server to track readiness and broadcast join code to clients
-                            var lobbyGo = new GameObject("LobbyStateManager");
-                            GameObject.DontDestroyOnLoad(lobbyGo);
-                            var no = lobbyGo.AddComponent<NetworkObject>();
-                            var lobby = lobbyGo.AddComponent<LobbyStateManager>();
-                            no.Spawn(true);
-                            // Publish the Relay join code so the host can share it and clients can see it
-                            lobby.SetJoinCode(joinCode);
-                            Debug.Log("[ServerBootstrap] LobbyStateManager spawned and join code broadcasted.");
+                            // Find scene-authored LobbyStateManager (NetworkObject) and publish join code.
+                            // Avoid runtime-spawned NetworkObject to prevent prefab registration errors on clients.
+                            var lobby = GameObject.FindObjectOfType<LobbyStateManager>();
+                            if (lobby != null)
+                            {
+                                lobby.SetJoinCode(joinCode);
+                                Debug.Log("[ServerBootstrap] Join code published via scene-authored LobbyStateManager.");
+                            }
+                            else
+                            {
+                                // With NGO scene management disabled, clients will not load ServerHeadless
+                                // and cannot see scene-authored NetworkObjects. Prefer a NetworkPrefab that
+                                // we spawn here so clients in any scene can receive it.
+                                try
+                                {
+                                    var lobbyPrefab = Resources.Load<GameObject>("Network/LobbyStateManager");
+                                    if (lobbyPrefab != null)
+                                    {
+                                        var spawned = GameObject.Instantiate(lobbyPrefab);
+                                        var no = spawned.GetComponent<NetworkObject>();
+                                        if (no == null) no = spawned.AddComponent<NetworkObject>();
+                                        // Spawn as a global object (don't tie to server scene) so clients in ClientUI can receive it
+                                        no.Spawn(destroyWithScene: false);
+                                        lobby = spawned.GetComponent<LobbyStateManager>();
+                                        if (lobby != null)
+                                        {
+                                            lobby.SetJoinCode(joinCode);
+                                        }
+                                        Debug.Log("[ServerBootstrap] Spawned LobbyStateManager prefab and published join code.");
+                                    }
+                                    else
+                                    {
+                                        Debug.LogWarning("[ServerBootstrap] LobbyStateManager not found in scene and prefab 'Resources/Network/LobbyStateManager' missing. Clients will not see join code in lobby UI.");
+                                    }
+                                }
+                                catch (Exception e)
+                                {
+                                    Debug.LogWarning($"[ServerBootstrap] Failed to spawn LobbyStateManager prefab: {e.Message}");
+                                }
+                            }
+
+                            // Fallback safety: if a host player object was auto-created anyway,
+                            // remove it immediately to keep the server in host-only mode.
+                            TryRemoveServerPlayer(manager);
                         }
                         catch (Exception e)
                         {
@@ -164,6 +206,42 @@ namespace BossFight2D.Network
             {
                 Debug.LogError($"[ServerBootstrap] Unity Services/Auth init error: {e}");
                 throw;
+            }
+        }
+
+        // Connection approval: approve all clients but suppress host/server player object creation
+        // when running in batch/headless mode so the server only hosts and does not play.
+        private static void ApproveConnectionNoHostPlayer(NetworkManager.ConnectionApprovalRequest request, NetworkManager.ConnectionApprovalResponse response)
+        {
+            response.Approved = true;
+            bool isHeadless = Application.isBatchMode;
+            bool isServerLocalConnection = request.ClientNetworkId == NetworkManager.ServerClientId;
+            response.CreatePlayerObject = !(isHeadless && isServerLocalConnection);
+            // Ensure the response is applied immediately (older NGO versions require Pending=false).
+            response.Pending = false;
+        }
+
+        // Safety helper: if a server player object exists for the host, despawn and destroy it.
+        private static void TryRemoveServerPlayer(NetworkManager manager)
+        {
+            try
+            {
+                if (Application.isBatchMode && manager.IsHost)
+                {
+                    if (manager.ConnectedClients.TryGetValue(NetworkManager.ServerClientId, out var serverClient))
+                    {
+                        var playerObj = serverClient.PlayerObject;
+                        if (playerObj != null)
+                        {
+                            Debug.Log("[ServerBootstrap] Removing server host PlayerObject to keep server non-playable.");
+                            playerObj.Despawn(true);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ServerBootstrap] TryRemoveServerPlayer encountered an error: {ex.Message}");
             }
         }
     }

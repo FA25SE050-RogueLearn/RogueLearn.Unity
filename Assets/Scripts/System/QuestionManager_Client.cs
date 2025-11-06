@@ -3,6 +3,9 @@ using UnityEngine.UI;
 using Unity.Netcode;
 using TMPro;
 using BossFight2D.UI;
+using BossFight2D.Systems;
+using BossFight2D.Player;
+using BossFight2D.Quiz;
 
 namespace BossFight2D.Systems
 {
@@ -16,16 +19,21 @@ namespace BossFight2D.Systems
 
         private void Awake()
         {
-            questionPanelController = FindObjectOfType<QuestionPanelController>();
-            for (int i = 0; i < answerButtons.Length; i++)
+            // Auto-disable legacy manager if QuizManager exists in the scene
+            var qm = QuizManager.Instance ?? UnityEngine.Object.FindFirstObjectByType<QuizManager>();
+            if (qm != null)
             {
-                int index = i;
-                answerButtons[i].onClick.AddListener(() => SubmitAnswer(index));
+                Debug.Log("[QuestionManager_Client] QuizManager detected; disabling legacy QuestionManager_Client to avoid conflicts. Please remove this component from the scene.");
+                enabled = false;
+                return;
             }
+            questionPanelController = FindObjectOfType<QuestionPanelController>();
+            // Do NOT wire button clicks here. QuestionPanelController handles button clicks and sends answers via QuizManager.
         }
 
         public override void OnNetworkSpawn()
         {
+            if (!enabled) return; // disabled due to QuizManager presence
             if (IsServer)
             {
                 enabled = false;
@@ -64,17 +72,31 @@ namespace BossFight2D.Systems
                     options = new string[] { answer1, answer2, answer3, answer4 }
                 };
                 questionPanelController.ShowQuestion(questionData);
+                // Raise EventBus for systems that gate combat and other behaviors
+                EventBus.RaiseQuestionStarted(questionData);
             }
         }
 
         [ClientRpc]
         public void ShowAnswerResultClientRpc(bool isCorrect, int correctIndex, int chosenIndex, ClientRpcParams clientRpcParams = default)
         {
-            SetButtonsInteractable(false);
-            if (!isCorrect)
+            // Drive resolution via centralized QuestionPanelController for consistent visuals and hide timing.
+            if (questionPanelController != null)
             {
-                answerButtons[chosenIndex].GetComponent<Image>().color = Color.red;
+                questionPanelController.ShowResolution(chosenIndex, isCorrect, correctIndex);
             }
+            else
+            {
+                // Fallback to local coloring if controller is missing
+                SetButtonsInteractable(false);
+                if (!isCorrect)
+                {
+                    var img = answerButtons[chosenIndex].GetComponent<Image>();
+                    if (img != null) img.color = Color.red;
+                }
+            }
+            // Raise client-side event for systems that rely on EventBus (e.g., guards)
+            EventBus.RaiseAnswerSubmitted(chosenIndex, isCorrect);
         }
 
         private void SetButtonsInteractable(bool interactable)
@@ -103,6 +125,12 @@ namespace BossFight2D.Systems
 
         public void SubmitAnswer(int choice)
         {
+            // Immediately suppress local player attacks when answering to prevent click-attack
+            var localCombat = FindLocalPlayerCombat();
+            if (localCombat != null)
+            {
+                localCombat.BeginAnswerInteractionLocal();
+            }
             SubmitAnswerServerRpc(choice);
         }
 
@@ -110,6 +138,16 @@ namespace BossFight2D.Systems
         private void SubmitAnswerServerRpc(int choice, ServerRpcParams rpcParams = default)
         {
             QuestionManager_Server.Singleton.ValidateAnswer(rpcParams.Receive.SenderClientId, choice);
+        }
+
+        private PlayerCombat FindLocalPlayerCombat()
+        {
+            var combats = Object.FindObjectsOfType<PlayerCombat>();
+            foreach (var pc in combats)
+            {
+                if (pc.IsOwner) return pc;
+            }
+            return null;
         }
     }
 }

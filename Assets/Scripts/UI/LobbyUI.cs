@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using Unity.Netcode;
@@ -126,9 +126,18 @@ public class LobbyUI : MonoBehaviour
         }
         _localReady = !_localReady;
         _readyBtnLabel.text = _localReady ? "Unready" : "I'm Ready";
-        if (_lobby != null)
+        if (_lobby != null && _lobby.IsSpawned)
         {
             _lobby.SetReadyServerRpc(_localReady);
+        }
+        else
+        {
+            Debug.LogWarning("[LobbyUI] Ready toggle ignored: LobbyStateManager is missing or not spawned yet.");
+            if (_lobby == null)
+            {
+                // Attempt to rediscover in case it spawned late
+                FindLobbyManager();
+            }
         }
     }
 

@@ -64,7 +64,11 @@ namespace BossFight2D.Quiz
         private Dictionary<ulong, bool> playerReadyStatus = new Dictionary<ulong, bool>();
         private Dictionary<ulong, int> playerAnswers = new Dictionary<ulong, int>();
         private bool punishTriggered = false;
-        
+        [Header("Ready Flow")]
+        [SerializeField] private bool continuousReadyFlow = true; // If true, keep players ready between rounds while they remain in the station
+        [SerializeField] private float interRoundDelaySeconds = 2f; // Pause between rounds before starting next question automatically
+        private float nextQuestionAllowedAt = 0f; // Time gate to avoid instant restart
+
         [Header("Power Play Triggering")]
         [SerializeField] private int powerPlayStreakThreshold = 3; // Require N consecutive correct answers to trigger Power Play
         [SerializeField] private bool consumeStreakOnActivation = true; // Reset streak when Power Play activates
@@ -133,6 +137,11 @@ namespace BossFight2D.Quiz
 
             if (State.Value == QuizState.Question)
             {
+                // Pause the question timer during Power Play to avoid unfair timeouts
+                if (PowerPlayManager.Instance != null && PowerPlayManager.Instance.IsPowerPlayActive.Value)
+                {
+                    return;
+                }
                 RemainingTime.Value -= Time.deltaTime;
                 if (RemainingTime.Value <= 0)
                 {
@@ -141,6 +150,12 @@ namespace BossFight2D.Quiz
                     NotifyQuestionTimeoutClientRpc();
                     ResolveAnswers();
                 }
+            }
+
+            // Auto-advance while idle after a short inter-round pause if all players are ready
+            if (State.Value == QuizState.Idle && continuousReadyFlow && Time.time >= nextQuestionAllowedAt)
+            {
+                CheckAllPlayersReady();
             }
         }
 
@@ -403,12 +418,22 @@ namespace BossFight2D.Quiz
         private void ResetForNextRound()
         {
             State.Value = QuizState.Idle;
-            var clientIds = playerReadyStatus.Keys.ToList();
-            foreach (var id in clientIds)
+            if (continuousReadyFlow)
             {
-                playerReadyStatus[id] = false;
+                // Keep existing ready states (station will auto-unready on exit/ejection)
+                ReadyCount.Value = GetReadyPlayableClients();
+                nextQuestionAllowedAt = Time.time + interRoundDelaySeconds;
             }
-            ReadyCount.Value = 0;
+            else
+            {
+                // Legacy behavior: require manual re-ready each round
+                var clientIds = playerReadyStatus.Keys.ToList();
+                foreach (var id in clientIds)
+                {
+                    playerReadyStatus[id] = false;
+                }
+                ReadyCount.Value = 0;
+            }
         }
 
         public void EndPowerPlayAndStartNextQuestion()
@@ -416,6 +441,11 @@ namespace BossFight2D.Quiz
             if (!IsServer) return;
 
             ResetForNextRound();
+            // Power Play flow can override delay to keep momentum
+            if (continuousReadyFlow)
+            {
+                nextQuestionAllowedAt = Time.time; // allow immediate start
+            }
             StartQuiz();
         }
 

@@ -15,37 +15,37 @@ namespace BossFight2D.Combat
 
     public static void ApplyAnswerDamage(QuestionData q, QuizManager qm)
     {
-        var boss = Object.FindFirstObjectByType<BossHealth>();
-        if (boss == null) return;
+      var boss = Object.FindFirstObjectByType<BossHealth>();
+      if (boss == null) return;
 
-        float baseDmg = q.difficulty == "Easy" ? baseEasy : q.difficulty == "Hard" ? baseHard : baseMed;
-        float timeRatio = Mathf.Clamp01(qm.RemainingTime.Value / Mathf.Max(0.01f, q.timeLimitSec));
-        float timeMult = 1f + timeBonusMax * timeRatio;
-        int dmg = Mathf.CeilToInt(baseDmg * timeMult);
+      float baseDmg = q.difficulty == "Easy" ? baseEasy : q.difficulty == "Hard" ? baseHard : baseMed;
+      float timeRatio = Mathf.Clamp01(qm.RemainingTime.Value / Mathf.Max(0.01f, q.timeLimitSec));
+      float timeMult = 1f + timeBonusMax * timeRatio;
+      int dmg = Mathf.CeilToInt(baseDmg * timeMult);
 
-        var playerHealth = Object.FindFirstObjectByType<PlayerHealth>();
-        var playerCombat = playerHealth != null ? playerHealth.GetComponent<PlayerCombat>() : Object.FindFirstObjectByType<PlayerCombat>();
+      var playerHealth = Object.FindFirstObjectByType<PlayerHealth>();
+      var playerCombat = playerHealth != null ? playerHealth.GetComponent<PlayerCombat>() : Object.FindFirstObjectByType<PlayerCombat>();
 
-        boss.TakeDamage(dmg);
-
-        if (playerCombat != null)
-        {
-            playerCombat.TriggerAttack();
-        }
+      // Apply the resolved damage directly to the boss. Do NOT trigger a player attack here.
+      // Triggering an attack animation from here bypasses PlayerCombat's input gating and
+      // can result in an extra unintended hit on the boss immediately after answering.
+      // The visual feedback for answering correctly should be driven by UI/Power Play,
+      // while actual combat attacks remain under PlayerCombat's control.
+      boss.TakeDamage(dmg);
     }
 
     public static void ApplyPenalty(QuestionData q, QuizManager qm)
     {
-        var boss = Object.FindFirstObjectByType<BossHealth>();
-        var player = Object.FindFirstObjectByType<PlayerHealth>();
-        if (boss != null)
-        {
-            // Boss doesn't take damage on penalty, maybe a different effect?
-        }
-        else
-        {
-            player?.Damage(1);
-        }
+      var boss = Object.FindFirstObjectByType<BossHealth>();
+      var player = Object.FindFirstObjectByType<PlayerHealth>();
+      if (boss != null)
+      {
+        // Boss doesn't take damage on penalty, maybe a different effect?
+      }
+      else
+      {
+        player?.Damage(1);
+      }
     }
   }
 }

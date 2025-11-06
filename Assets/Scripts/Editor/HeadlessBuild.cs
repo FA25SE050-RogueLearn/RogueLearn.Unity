@@ -56,7 +56,7 @@ public static class HeadlessBuild
             var buildPlayerOptions = new BuildPlayerOptions
             {
                 scenes = scenes,
-                locationPathName = "Build/LinuxServer/BossFight2D.x86_64",
+                locationPathName = "build/StandaloneLinux64/BossFight2D.x86_64",
                 target = BuildTarget.StandaloneLinux64,
                 options = BuildOptions.EnableHeadlessMode | BuildOptions.CompressWithLz4HC
             };

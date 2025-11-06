@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Collections;
 using UnityEngine;
 using Unity.Netcode;
@@ -27,6 +29,9 @@ namespace BossFight2D.Network
         [Tooltip("If true, auto-load gameplay when at least one client connects and QuizManager is not yet present.")]
         [SerializeField] private bool autoLoadGameplayIfMissingQuizManager = true;
 
+        [Tooltip("If true, auto-mark all connected players as ready when QuizManager is Idle. If false, players must ready manually (e.g., via ReadyStation).")]
+        [SerializeField] private bool autoReadyAllPlayers = false;
+
         private bool _started;
         private bool _gameplayLoadTriggered;
 
@@ -37,6 +42,43 @@ namespace BossFight2D.Network
                 enabled = false;
                 return;
             }
+
+            // Optional environment-driven configuration for headless server behavior
+            try
+            {
+                var autoloadEnv = Environment.GetEnvironmentVariable("HEADLESS_AUTOLOAD_ON_FIRST_CLIENT");
+                if (!string.IsNullOrWhiteSpace(autoloadEnv))
+                {
+                    autoLoadGameplayIfMissingQuizManager =
+                        autoloadEnv.Equals("1") || autoloadEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
+                }
+
+                // Optional: control whether to auto mark players ready
+                var autoReadyEnv = Environment.GetEnvironmentVariable("HEADLESS_AUTO_READY_ALL");
+                if (!string.IsNullOrWhiteSpace(autoReadyEnv))
+                {
+                    autoReadyAllPlayers = autoReadyEnv.Equals("1") || autoReadyEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
+                }
+
+                var gameplayEnv = Environment.GetEnvironmentVariable("GAMEPLAY_SCENE");
+                if (!string.IsNullOrWhiteSpace(gameplayEnv))
+                {
+                    targetSceneName = gameplayEnv;
+                }
+
+                var delayEnv = Environment.GetEnvironmentVariable("AUTO_READY_DELAY_SECONDS");
+                if (!string.IsNullOrWhiteSpace(delayEnv) && float.TryParse(delayEnv, out var delay))
+                {
+                    // Clamp to a reasonable range to avoid pathological values
+                    readyDelaySeconds = Mathf.Clamp(delay, 0f, 10f);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[ServerAutoStartOnReady] Env config error: {e.Message}");
+            }
+
+            Debug.Log($"[ServerAutoStartOnReady] Config: requireBatchMode={requireBatchMode}, batch={Application.isBatchMode}, autoLoadGameplayIfMissingQuizManager={autoLoadGameplayIfMissingQuizManager}, autoReadyAllPlayers={autoReadyAllPlayers}, targetScene='{targetSceneName}', readyDelaySeconds={readyDelaySeconds}");
         }
 
         private void OnEnable()
@@ -66,7 +108,10 @@ namespace BossFight2D.Network
                     // In HostUI/Lobby we want players to ready up and let lobby logic transition.
                     var active = SceneManager.GetActiveScene().name;
                     var canAutoLoadFromHeadless = string.Equals(active, "ServerHeadless", System.StringComparison.OrdinalIgnoreCase);
-                    if (canAutoLoadFromHeadless && autoLoadGameplayIfMissingQuizManager && !_gameplayLoadTriggered && nm.IsListening && nm.ConnectedClientsIds != null && nm.ConnectedClientsIds.Count > 0 && nm.SceneManager != null)
+                    // Only trigger autoload when there's at least one external client connected (exclude the server's own host client).
+                    var ids = nm.ConnectedClientsIds;
+                    var anyExternalClient = ids != null && ids.Any(id => id != NetworkManager.ServerClientId);
+                    if (canAutoLoadFromHeadless && autoLoadGameplayIfMissingQuizManager && !_gameplayLoadTriggered && nm.IsListening && anyExternalClient && nm.SceneManager != null)
                     {
                         if (!string.Equals(active, targetSceneName))
                         {
@@ -85,25 +130,33 @@ namespace BossFight2D.Network
                         var ids = nm.ConnectedClientsIds;
                         if (ids != null && ids.Count > 0)
                         {
-                            foreach (var id in ids)
+                            if (autoReadyAllPlayers)
                             {
-                                // In headless mode, the server runs as Host to bind Relay but is not a playable client.
-                                // Skip auto-readying the server/host client to avoid mismatched counts.
-                                if (Application.isBatchMode && nm.IsHost && id == NetworkManager.ServerClientId)
+                                foreach (var id in ids)
                                 {
-                                    continue;
+                                    // In headless mode, the server runs as Host to bind Relay but is not a playable client.
+                                    // Skip auto-readying the server/host client to avoid mismatched counts.
+                                    if (Application.isBatchMode && nm.IsHost && id == NetworkManager.ServerClientId)
+                                    {
+                                        continue;
+                                    }
+                                    if (!qm.IsPlayerReady(id))
+                                    {
+                                        qm.PlayerReadyChanged(id, true);
+                                    }
                                 }
-                                if (!qm.IsPlayerReady(id))
+
+                                // If all ready, QuizManager will transition to Question state
+                                if (qm.State.Value == BossFight2D.Quiz.QuizState.Question)
                                 {
-                                    qm.PlayerReadyChanged(id, true);
+                                    _started = true;
+                                    Debug.Log("[ServerAutoStartOnReady] Quiz started automatically (all players ready).");
                                 }
                             }
-
-                            // If all ready, QuizManager will transition to Question state
-                            if (qm.State.Value == BossFight2D.Quiz.QuizState.Question)
+                            else
                             {
-                                _started = true;
-                                Debug.Log("[ServerAutoStartOnReady] Quiz started automatically (all players ready).");
+                                // Auto-ready disabled: wait for players to ready manually via gameplay mechanisms.
+                                // If you want to start automatically, set env HEADLESS_AUTO_READY_ALL=1 (or true).
                             }
                         }
                     }
