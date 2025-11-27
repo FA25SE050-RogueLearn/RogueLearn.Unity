@@ -1,6 +1,7 @@
 using UnityEngine;
 using BossFight2D.Systems;
 using BossFight2D.Core;
+using Unity.Netcode.Components;
 
 namespace BossFight2D.Boss
 {
@@ -13,8 +14,8 @@ namespace BossFight2D.Boss
     private BossHealth bossHealth;
 
     [Header("Wrong Answer Telegraph")]
-    public float wrongTelegraph = 0.6f; // delay before perfect window
-    public float perfectWindow = 0.2f;   // window length
+    public float wrongTelegraph = 0.9f;
+    public float perfectWindow = 0.35f;
 
     public Animator animator;
     bool perfectSuccess;
@@ -112,7 +113,15 @@ namespace BossFight2D.Boss
 
     void OnGameWon()
     {
-      if (animator != null) animator.SetTrigger("Death");
+      var na = GetComponent<NetworkAnimator>();
+      if (Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsServer && na != null)
+      {
+        na.SetTrigger("Death");
+      }
+      else if (animator != null)
+      {
+        animator.SetTrigger("Death");
+      }
 
       // Ensure boss combat/Hitbox are disabled after victory to prevent stray interactions
       if (combat != null)

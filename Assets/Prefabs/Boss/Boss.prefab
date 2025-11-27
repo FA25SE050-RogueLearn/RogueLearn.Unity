@@ -18,6 +18,7 @@ GameObject:
   - component: {fileID: 4162434479346988338}
   - component: {fileID: 1415216586418624027}
   - component: {fileID: 2295817760512323066}
+  - component: {fileID: 7476232988521014327}
   m_Layer: 0
   m_Name: Boss
   m_TagString: Boss
@@ -162,6 +163,7 @@ MonoBehaviour:
   hitboxAngleOffset: 0
   moveHitboxTowardPlayer: 1
   hitboxForwardDistance: 5
+  playerFindInterval: 1
   patrolDuringQuestion: 1
   onlyPatrolWhenWithinRange: 1
   patrolRadius: 5
@@ -258,7 +260,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 3316045065
+  GlobalObjectIdHash: 1328136099
   InScenePlacedSourceGlobalObjectIdHash: 0
   AlwaysReplicateAsRoot: 0
   SynchronizeTransform: 1
@@ -296,6 +298,27 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   bossHealthSlider: {fileID: 0}
   boss: {fileID: 5222594161849446146}
+--- !u!114 &7476232988521014327
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5635659168999775891}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e8d0727d5ae3244e3b569694d3912374, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  TransitionStateInfoList:
+  - IsCrossFadeExit: 0
+    Layer: 0
+    OriginatingState: 2081823275
+    DestinationState: 1080829965
+    TransitionDuration: 0.25
+    TriggerNameHash: 1080829965
+    TransitionIndex: 0
+  m_Animator: {fileID: 6680802172296504838}
 --- !u!1 &7579547961988164678
 GameObject:
   m_ObjectHideFlags: 0

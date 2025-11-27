@@ -7,6 +7,7 @@ public class HealthUI : MonoBehaviour
 {
     public Slider healthSlider;
     private PlayerHealth localPlayerHealth;
+    private bool _bound;
 
     void Start()
     {
@@ -15,6 +16,8 @@ public class HealthUI : MonoBehaviour
         {
             NetworkManager.Singleton.OnClientStarted += FindAndBindPlayer;
         }
+        // Also attempt immediate bind in case we're already started
+        TryBindImmediate();
     }
 
     private void OnDestroy()
@@ -44,6 +47,18 @@ public class HealthUI : MonoBehaviour
                 // Subscribe to future changes
                 localPlayerHealth.maxHearts.OnValueChanged += OnMaxHealthChanged;
                 localPlayerHealth.hearts.OnValueChanged += OnHealthChanged;
+                _bound = true;
+            }
+        }
+    }
+
+    void TryBindImmediate()
+    {
+        if (!_bound)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClient != null && NetworkManager.Singleton.LocalClient.PlayerObject != null)
+            {
+                FindAndBindPlayer();
             }
         }
     }
@@ -52,15 +67,32 @@ public class HealthUI : MonoBehaviour
     {
         if (healthSlider != null)
         {
-            healthSlider.maxValue = newValue;
+            healthSlider.maxValue = 1f;
         }
     }
 
     private void OnHealthChanged(int previousValue, int newValue)
     {
-        if (healthSlider != null)
+        if (healthSlider != null && localPlayerHealth != null)
         {
-            healthSlider.value = newValue;
+            int max = Mathf.Max(1, localPlayerHealth.maxHearts.Value);
+            float ratio = Mathf.Clamp01((float)newValue / max);
+            healthSlider.value = ratio;
+        }
+    }
+
+    void Update()
+    {
+        if (!_bound) TryBindImmediate();
+        // Polling fallback if events missed
+        if (healthSlider != null && localPlayerHealth != null)
+        {
+            int max = Mathf.Max(1, localPlayerHealth.maxHearts.Value);
+            float ratio = Mathf.Clamp01((float)localPlayerHealth.hearts.Value / max);
+            if (!Mathf.Approximately(healthSlider.value, ratio))
+            {
+                healthSlider.value = ratio;
+            }
         }
     }
 }

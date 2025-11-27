@@ -1,23 +1,32 @@
 using UnityEngine;
+using Unity.Netcode;
 using BossFight2D.Systems;
 using BossFight2D;
 using BossFight2D.Player;
 using BossFight2D.Core;
 using BossFight2D.Effects;
 using BossFight2D.Quiz;
+using Unity.Netcode.Components;
+using UnityEngine.Scripting;
 
 namespace BossFight2D.Boss
 {
-    public class BossCombat : MonoBehaviour
+    public class BossCombat : NetworkBehaviour
     {
         private ReadyStation _readyStation;
 
         [Header("Game State")]
         [Tooltip("If true, the boss will patrol while a question is active. If false, it will stand still.")]
         public Animator animator;
+        private NetworkAnimator _networkAnimator;
         public BossFight2D.Combat.Hitbox2D hitbox;
         public float windup = 0.2f;
         public float hitboxWindow = 0.2f;
+        public float attackCooldownSeconds = 0.6f;
+        public float punishAttackCooldownSeconds = 1.0f;
+        public float punishWindupMultiplier = 2.0f;
+        public float punishHitboxWindowMultiplier = 0.75f;
+        private float _nextAttackAllowed = 0f;
         [SerializeField] private Transform playerTransform;
 
         [Header("Timing")]
@@ -121,8 +130,7 @@ namespace BossFight2D.Boss
             if (hitbox == null) hitbox = GetComponentInChildren<BossFight2D.Combat.Hitbox2D>();
             if (playerTransform == null)
             {
-                var pc = FindFirstObjectByType<PlayerController>();
-                if (pc != null) playerTransform = pc.transform;
+                playerTransform = SelectBestPlayerTransform();
             }
             if (sr == null) sr = GetComponentInChildren<SpriteRenderer>();
             if (hitbox != null)
@@ -131,6 +139,22 @@ namespace BossFight2D.Boss
                 _hitboxDefaultLocalPosition = hitbox.transform.localPosition;
             }
             rb = GetComponent<Rigidbody2D>();
+            var nt = GetComponent<NetworkTransform>();
+            if (nt == null) gameObject.AddComponent<NetworkTransform>();
+            if (rb != null) rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+            if (NetworkManager.Singleton != null)
+            {
+                useAnimationEvents = false;
+            }
+            _networkAnimator = GetComponent<NetworkAnimator>();
+            if (_networkAnimator == null && animator != null)
+            {
+                _networkAnimator = animator.gameObject.GetComponent<NetworkAnimator>();
+                if (_networkAnimator == null)
+                {
+                    _networkAnimator = animator.gameObject.AddComponent<NetworkAnimator>();
+                }
+            }
             gm = FindFirstObjectByType<GameManager>();
             _readyStation = FindObjectOfType<ReadyStation>();
         }
@@ -190,24 +214,53 @@ namespace BossFight2D.Boss
 
         public void QueueAttack(int damage, GameObject target = null)
         {
-            // Suppress normal attacks while the player is in the safe zone (ready inside station) unless we are in punish flow
-            if (QuizManager.Instance != null && QuizManager.Instance.State.Value != QuizState.Idle && !_isPunishAttack) return;
+            if (Time.time < _nextAttackAllowed) return;
+            // MVP: Allow attacks during questions if player is outside safe zone
+            // Suppress attacks only if player is actually INSIDE the station during question phase
+            bool inQuiz = QuizManager.Instance != null && QuizManager.Instance.State.Value != QuizState.Idle;
+            bool playerInSafeZone = inQuiz && PlayerInsideStationBounds();
+            if (playerInSafeZone && !_isPunishAttack) return; // Only block if truly safe
+            if (playerTransform == null)
+            {
+                playerTransform = SelectBestPlayerTransform();
+            }
             _queuedDamage = damage;
-            if (animator != null) animator.SetTrigger("Attack");
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer && _networkAnimator != null)
+            {
+                _networkAnimator.SetTrigger("Attack");
+            }
+            else if (animator != null)
+            {
+                animator.SetTrigger("Attack");
+            }
             if (hitbox != null && !useAnimationEvents)
             {
-                Invoke(nameof(BeginHitbox), windup);
-                Invoke(nameof(EndHitbox), windup + hitboxWindow);
+                var w = windup;
+                var h = hitboxWindow;
+                if (_isPunishAttack)
+                {
+                    try { w = windup * punishWindupMultiplier; h = hitboxWindow * punishHitboxWindowMultiplier; } catch { }
+                }
+                Invoke(nameof(BeginHitbox), w);
+                Invoke(nameof(EndHitbox), w + h);
             }
             // Draw telegraph line toward player during windup
             if (playerTransform != null)
             {
-                Debug.DrawLine(transform.position, playerTransform.position, debugTelegraphColor, windup);
+                var teleW = _isPunishAttack ? windup * punishWindupMultiplier : windup;
+                Debug.DrawLine(transform.position, playerTransform.position, debugTelegraphColor, teleW);
             }
             // Spawn telegraph indicator at predicted hit location
             if (showTelegraph)
             {
-                ShowTelegraph(windup);
+                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+                {
+                    ShowTelegraphClientRpc(windup);
+                }
+                else
+                {
+                    ShowTelegraph(windup);
+                }
             }
         }
 
@@ -218,41 +271,44 @@ namespace BossFight2D.Boss
         {
             // Remove telegraph when the attack starts
             HideTelegraph();
-            if (hitbox != null)
+            if (!NetworkManager.Singleton || NetworkManager.Singleton.IsServer)
             {
-                if (lockAttackToTelegraph && _hasPredicted)
+                if (hitbox != null)
                 {
-
-                    hitbox.transform.rotation = _predictedHitboxWorldRot;
-                    hitbox.transform.position = _predictedHitboxWorldPos;
-
-                }
-                else
-                {
-                    if (rotateHitboxTowardPlayer && playerTransform != null)
+                    if (lockAttackToTelegraph && _hasPredicted)
                     {
-                        Vector3 dir = (playerTransform.position - transform.position);
-                        float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg + hitboxAngleOffset;
-                        hitbox.transform.localRotation = Quaternion.Euler(0f, 0f, angle);
+
+                        hitbox.transform.rotation = _predictedHitboxWorldRot;
+                        hitbox.transform.position = _predictedHitboxWorldPos;
+
                     }
-                    if (moveHitboxTowardPlayer)
+                    else
                     {
-                        // Base world position preserving default local offset
-                        Vector3 baseWorld = transform.TransformPoint(_hitboxDefaultLocalPosition);
-                        // Push forward along the aimed (right) vector
-                        Vector3 forward = hitbox.transform.right;
-                        if (_isPunishAttack && playerTransform != null)
+                        if (rotateHitboxTowardPlayer && playerTransform != null)
                         {
-                            // Snap hitbox to player's position for punish attacks
-                            hitbox.transform.position = playerTransform.position;
+                            Vector3 dir = (playerTransform.position - transform.position);
+                            float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg + hitboxAngleOffset;
+                            hitbox.transform.localRotation = Quaternion.Euler(0f, 0f, angle);
                         }
-                        else
+                        if (moveHitboxTowardPlayer)
                         {
-                            hitbox.transform.position = baseWorld + forward * Mathf.Clamp((transform.position - playerTransform.position).magnitude, 0, hitboxForwardDistance);
+                            // Base world position preserving default local offset
+                            Vector3 baseWorld = transform.TransformPoint(_hitboxDefaultLocalPosition);
+                            // Push forward along the aimed (right) vector
+                            Vector3 forward = hitbox.transform.right;
+                            if (_isPunishAttack && playerTransform != null)
+                            {
+                                // Snap hitbox to player's position for punish attacks
+                                hitbox.transform.position = playerTransform.position;
+                            }
+                            else
+                            {
+                                hitbox.transform.position = baseWorld + forward * Mathf.Clamp((transform.position - playerTransform.position).magnitude, 0, hitboxForwardDistance);
+                            }
                         }
                     }
+                    hitbox.Activate(hitboxWindow, _queuedDamage);
                 }
-                hitbox.Activate(hitboxWindow, _queuedDamage);
             }
             // Draw active attack line toward player for hitbox window duration
             if (playerTransform != null)
@@ -265,16 +321,21 @@ namespace BossFight2D.Boss
         /// </summary>
         void EndHitbox()
         {
-            if (hitbox != null)
+            if (!NetworkManager.Singleton || NetworkManager.Singleton.IsServer)
             {
-                hitbox.Deactivate();
-                hitbox.transform.localRotation = _hitboxDefaultLocalRotation;
-                hitbox.transform.localPosition = _hitboxDefaultLocalPosition;
+                if (hitbox != null)
+                {
+                    hitbox.Deactivate();
+                    hitbox.transform.localRotation = _hitboxDefaultLocalRotation;
+                    hitbox.transform.localPosition = _hitboxDefaultLocalPosition;
+                }
             }
             _queuedDamage = 1;
             if (_isPunishAttack)
             {
                 EventBus.RaiseWrongAnswerChallengeEnded();
+                var cd = punishAttackCooldownSeconds;
+                _nextAttackAllowed = Time.time + cd;
                 _isPunishAttack = false;
             }
             ResetPrediction();
@@ -283,10 +344,12 @@ namespace BossFight2D.Boss
         /// <summary>
         /// Triggers the hitbox activation at the start of the animation.
         /// </summary>
+        [Preserve]
         public void AnimationEvent_HitboxStart() { BeginHitbox(); }
         /// <summary>
         /// Triggers the hitbox deactivation at the end of the animation.
         /// </summary>  
+        [Preserve]
         public void AnimationEvent_HitboxEnd() { EndHitbox(); }
 
         /// <summary>
@@ -428,6 +491,13 @@ namespace BossFight2D.Boss
             }
         }
 
+        [ClientRpc]
+        private void ShowTelegraphClientRpc(float duration)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer) return;
+            ShowTelegraph(duration);
+        }
+
         /// <summary>
         /// Resets the predicted hitbox position and rotation.
         /// </summary>
@@ -442,8 +512,7 @@ namespace BossFight2D.Boss
             // Reacquire player transform if missing (boss may spawn before player)
             if (playerTransform == null && Time.time >= _nextPlayerFindTime)
             {
-                var pc = FindFirstObjectByType<PlayerController>();
-                if (pc != null) playerTransform = pc.transform;
+                playerTransform = SelectBestPlayerTransform();
                 _nextPlayerFindTime = Time.time + playerFindInterval;
             }
             if (facePlayer && playerTransform != null && sr != null)
@@ -456,11 +525,16 @@ namespace BossFight2D.Boss
 
         void FixedUpdate()
         {
+            // Make boss movement server-authoritative when Netcode is present.
+            // In offline mode (no NetworkManager), this falls back to local movement.
+            if (NetworkManager.Singleton != null && !IsServer)
+            {
+                return; // Clients don't move the boss; movement replicates via NetworkTransform on the boss.
+            }
             // Reacquire player in physics loop as a fallback
             if (playerTransform == null && Time.time >= _nextPlayerFindTime)
             {
-                var pc = FindFirstObjectByType<PlayerController>();
-                if (pc != null) playerTransform = pc.transform;
+                playerTransform = SelectBestPlayerTransform();
                 _nextPlayerFindTime = Time.time + playerFindInterval;
             }
             // Effective safe zone gating: only suppress chase if the safe zone is active AND the player is actually inside station bounds.
@@ -601,6 +675,47 @@ namespace BossFight2D.Boss
             if (col == null || playerTransform == null) return false;
             var b = col.bounds; var p = playerTransform.position;
             return (p.x > b.min.x && p.x < b.max.x && p.y > b.min.y && p.y < b.max.y);
+        }
+
+        // Variant: check if an arbitrary position is inside the station bounds
+        bool PositionInsideStationBounds(Vector3 pos)
+        {
+            var col = _readyStation != null ? _readyStation.GetComponent<Collider2D>() : null;
+            if (col == null) return false;
+            var b = col.bounds;
+            return (pos.x > b.min.x && pos.x < b.max.x && pos.y > b.min.y && pos.y < b.max.y);
+        }
+
+        // Prefer spawned network players and those outside the ReadyStation.
+        // Falls back to any PlayerController if none meet the criteria.
+        Transform SelectBestPlayerTransform()
+        {
+            // Try to find all player controllers. Use the broad API for older Unity versions.
+            var players = FindObjectsOfType<PlayerController>();
+            if (players == null || players.Length == 0) return null;
+
+            PlayerController best = null;
+            int bestScore = int.MinValue;
+            foreach (var pc in players)
+            {
+                if (pc == null) continue;
+                var no = pc.GetComponent<NetworkObject>();
+                bool isSpawned = no != null && no.IsSpawned;
+                bool outsideStation = !PositionInsideStationBounds(pc.transform.position);
+                // Score: prioritize spawned network players outside the station
+                int score = 0;
+                if (isSpawned) score += 10; else score -= 2; // prefer real networked players
+                if (outsideStation) score += 5; else score -= 1; // prefer targets outside the safe zone
+                // Prefer the locally-owned player slightly if server-only data not yet synced
+                if (no != null && no.IsOwner) score += 1;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = pc;
+                }
+            }
+            return best != null ? best.transform : players[0].transform;
         }
 
         // Geometry helpers for simple detour planning

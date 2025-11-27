@@ -36,7 +36,12 @@ namespace BossFight2D.Core
       State = GameState.Win;
       Systems.EventBus.RaiseGameWon();
     }
-    public void LoseGame() { State = GameState.Lose; Systems.EventBus.RaiseGameLost(); }
+    public void LoseGame()
+    {
+      if (State == GameState.Win || State == GameState.Lose) return;
+      State = GameState.Lose;
+      Systems.EventBus.RaiseGameLost();
+    }
     public void PauseGame()
     {
       // Allow pausing from Init or Playing (block only in Win/Lose/Paused)

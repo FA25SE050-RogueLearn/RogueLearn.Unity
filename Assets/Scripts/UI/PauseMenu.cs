@@ -19,7 +19,7 @@ namespace BossFight2D.UI
 
     [Header("Settings")]
     [Tooltip("Scene name to load when clicking Main Menu. Leave empty to reload current scene.")]
-    public string mainMenuSceneName = "MainMenu";
+    public string mainMenuSceneName = "ClientUI";
 
     GameObject _panel;
     Slider _volumeSlider;
@@ -73,8 +73,11 @@ namespace BossFight2D.UI
     {
       var gm = GameObjectFactory.FindOrCreate<GameManager>();
       if (gm != null && gm.State == GameState.Paused) { gm.ResumeGame(); }
-      if (!string.IsNullOrEmpty(mainMenuSceneName)) SceneManager.LoadScene(mainMenuSceneName);
-      else SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+      // Try to load the configured menu scene; if it isn't in the build, fall back to reloading current
+      if (!string.IsNullOrEmpty(mainMenuSceneName) && Application.CanStreamedLevelBeLoaded(mainMenuSceneName))
+        SceneManager.LoadScene(mainMenuSceneName);
+      else
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
     void OnVolumeChanged(float v) { AudioListener.volume = Mathf.Clamp01(v); PlayerPrefs.SetFloat(PrefVolume, AudioListener.volume); PlayerPrefs.Save(); }

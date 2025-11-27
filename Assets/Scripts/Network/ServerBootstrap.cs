@@ -78,8 +78,9 @@ namespace BossFight2D.Network
                     return;
                 }
 
-                // Keep dedicated server in control; clients will not auto-sync scenes.
-                manager.NetworkConfig.EnableSceneManagement = false;
+                // Enable Netcode scene management so the server can synchronize scene transitions
+                // (e.g., moving everyone from lobby to gameplay together).
+                manager.NetworkConfig.EnableSceneManagement = true;
                 var transport = manager.NetworkConfig.NetworkTransport as UnityTransport;
                 if (transport == null)
                 {
@@ -209,14 +210,15 @@ namespace BossFight2D.Network
             }
         }
 
-        // Connection approval: approve all clients but suppress host/server player object creation
-        // when running in batch/headless mode so the server only hosts and does not play.
+        // Connection approval: approve all clients and fully control player object creation ourselves.
+        // We suppress automatic NGO PlayerPrefab spawning for ALL connections and instead spawn via
+        // LobbyStateManager.EnsurePlayerSpawnServerRpc when Gameplay loads on clients. This avoids
+        // race conditions between NGO auto-spawn and our manual spawn logic across scenes.
         private static void ApproveConnectionNoHostPlayer(NetworkManager.ConnectionApprovalRequest request, NetworkManager.ConnectionApprovalResponse response)
         {
             response.Approved = true;
-            bool isHeadless = Application.isBatchMode;
-            bool isServerLocalConnection = request.ClientNetworkId == NetworkManager.ServerClientId;
-            response.CreatePlayerObject = !(isHeadless && isServerLocalConnection);
+            // Disable auto PlayerObject spawning for all connections; we'll spawn explicitly later.
+            response.CreatePlayerObject = false;
             // Ensure the response is applied immediately (older NGO versions require Pending=false).
             response.Pending = false;
         }

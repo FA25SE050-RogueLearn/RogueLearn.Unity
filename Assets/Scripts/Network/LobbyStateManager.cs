@@ -26,6 +26,29 @@ namespace BossFight2D.Network
         // When true, the gameplay scene has been launched; readiness toggles should no longer trigger scene loads
         private bool _gameSessionActive = false;
 
+        // Forward a WebGL-provided Relay join code to the server so it can resolve the session
+        // and load the correct question pack before gameplay starts.
+        [ServerRpc(RequireOwnership = false)]
+        public void ResolveAndLoadPackServerRpc(string joinCode)
+        {
+            if (string.IsNullOrWhiteSpace(joinCode)) return;
+            try
+            {
+                var gsc = BossFight2D.Systems.GameSessionClient.Instance ?? FindFirstObjectByType<BossFight2D.Systems.GameSessionClient>();
+                if (gsc == null)
+                {
+                    Debug.LogError("[LobbyStateManager] GameSessionClient not found on server; cannot resolve pack.");
+                    return;
+                }
+                Debug.Log($"[LobbyStateManager] Received join code from client. Resolving on server: {joinCode}");
+                gsc.BeginAutoResolveWithJoinCode(joinCode);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[LobbyStateManager] ResolveAndLoadPackServerRpc failed: {e.Message}");
+            }
+        }
+
         private void OnEnable()
         {
             // Subscribe to connection events on server to keep counts updated
@@ -49,7 +72,7 @@ namespace BossFight2D.Network
         {
             // Ensure the lobby manager persists across local scene loads on clients and server
             // so readiness and player-spawn RPCs remain available during transitions.
-            try { DontDestroyOnLoad(gameObject); } catch {}
+            try { DontDestroyOnLoad(gameObject); } catch { }
             if (IsServer)
             {
                 RecalculateCounts();
@@ -148,10 +171,19 @@ namespace BossFight2D.Network
             var nm = NetworkManager.Singleton;
             if (nm == null) return;
 
-            // With NGO scene management disabled, instruct clients to load the gameplay scene via ClientRpc
-            // while the server can load it locally (optional) for headless physics/logic.
-            Debug.Log($"[LobbyStateManager] All players ready: instructing clients to load '{gameplaySceneName}'.");
-            LoadGameplayClientRpc(gameplaySceneName);
+            // If Netcode scene management is enabled, perform a synchronized scene load
+            // so all clients (and the server) transition together.
+            if (nm.NetworkConfig.EnableSceneManagement && nm.SceneManager != null)
+            {
+                Debug.Log($"[LobbyStateManager] All players ready: loading '{gameplaySceneName}' for all clients via NetworkSceneManager.");
+                nm.SceneManager.LoadScene(gameplaySceneName, LoadSceneMode.Single);
+            }
+            else
+            {
+                // Fallback: instruct clients to load locally via ClientRpc when scene management is disabled.
+                Debug.Log($"[LobbyStateManager] All players ready: instructing clients to load '{gameplaySceneName}' locally.");
+                LoadGameplayClientRpc(gameplaySceneName);
+            }
             _gameSessionActive = true;
         }
 
@@ -165,6 +197,14 @@ namespace BossFight2D.Network
             var nm = NetworkManager.Singleton;
             if (nm == null) return;
             var clientId = rpcParams.Receive.SenderClientId;
+
+            // Skip spawning for the server host pseudo-client in headless mode.
+            // Only real playable clients should receive a PlayerObject.
+            if (!IsPlayableClient(clientId))
+            {
+                Debug.Log($"[LobbyStateManager] Ignoring EnsurePlayerSpawn for non-playable client {clientId}.");
+                return;
+            }
 
             var existing = nm.SpawnManager.GetPlayerNetworkObject(clientId);
             if (existing != null)

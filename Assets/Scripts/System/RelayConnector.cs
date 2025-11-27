@@ -27,6 +27,7 @@ namespace BossFight2D.Systems
         public event Action<string> OnStatus;
 
         private bool _servicesInitialized = false;
+        private string _pendingJoinCodeForServer = null;
         [SerializeField]
         [Tooltip("Optional: Set a fixed Relay region to avoid QoS selection on unsupported platforms (e.g., WebGL). Example: 'us-central' or 'eu-west'.")]
         private string preferredRegion = "";
@@ -42,7 +43,15 @@ namespace BossFight2D.Systems
         // from stripping it during managed code stripping, which would otherwise cause
         // "null function or function signature mismatch" in the browser.
         [Preserve]
-        public void JoinWithCode(string code) { Debug.Log($"[WebGL] JoinWithCode: {code}"); _ = JoinClientWithRelayAsync(code); }
+        public void JoinWithCode(string code)
+        {
+            Debug.Log($"[WebGL] JoinWithCode: {code}");
+            _pendingJoinCodeForServer = code;
+            _ = JoinClientWithRelayAsync(code);
+            // Also resolve the session and fetch the pack so questions can be loaded.
+            try { GameSessionClient.Instance?.BeginAutoResolveWithJoinCode(code); }
+            catch (Exception e) { Debug.LogWarning($"[WebGL] JoinWithCode: failed to trigger GameSessionClient resolve: {e.Message}"); }
+        }
 #endif
         private async Task EnsureServicesAsync()
         {
@@ -86,9 +95,9 @@ namespace BossFight2D.Systems
                 // Keep NetworkConfig consistent with clients and dedicated server: enable connection approval.
                 // For Editor/desktop hosting we approve all clients and DO create player objects.
                 nm.NetworkConfig.ConnectionApproval = true;
-                // IMPORTANT: disable NGO scene management so connecting clients remain in their current UI scene
-                // and are not forced to synchronize to the server's active scene (ServerHeadless).
-                nm.NetworkConfig.EnableSceneManagement = false;
+                // Enable NGO scene management so the server can synchronize scene transitions
+                // (clients will follow server-initiated scene loads such as moving to Gameplay).
+                nm.NetworkConfig.EnableSceneManagement = true;
                 nm.ConnectionApprovalCallback = (request, response) =>
                 {
                     response.Approved = true;
@@ -157,10 +166,23 @@ namespace BossFight2D.Systems
                 // Having mismatched NetworkConfig (e.g., server requires approval but client doesn’t) can yield
                 // "Incomplete connection request message given config" during the handshake.
                 nm.NetworkConfig.ConnectionApproval = true;
-                // Keep clients in their current UI scene during handshake; server will instruct scene changes via ClientRpc.
-                nm.NetworkConfig.EnableSceneManagement = false;
+                // Enable NGO scene management on clients to match the server and support synchronized scene loads.
+                nm.NetworkConfig.EnableSceneManagement = true;
                 nm.ConnectionApprovalCallback = (request, response) => { };
                 Debug.Log($"[RelayConnector] Client NetworkConfig: Approval={nm.NetworkConfig.ConnectionApproval}, SceneMgmt={nm.NetworkConfig.EnableSceneManagement}");
+
+                // Remember the join code so we can forward it to the server once connected,
+                // and trigger client-side resolve for visibility in the Inspector.
+                // Note: Only the server will fetch and inject the pack; the client resolve stops after obtaining session/pack_url.
+                _pendingJoinCodeForServer = joinCode.Trim();
+                try
+                {
+                    GameSessionClient.Instance?.BeginAutoResolveWithJoinCode(joinCode.Trim());
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[RelayConnector] Failed to trigger GameSessionClient resolve on client: {e.Message}");
+                }
 
                 JoinAllocation joinAlloc = await RelayService.Instance.JoinAllocationAsync(joinCode.Trim());
                 var transport = nm.GetComponent<UnityTransport>();
@@ -181,6 +203,24 @@ namespace BossFight2D.Systems
                     OnStatus?.Invoke("Client started.");
                     Debug.Log("Relay Client started.");
                     WireNetworkDebugCallbacks(nm);
+                    // If we joined via a code from WebGL, forward it to the server once connected
+                    nm.OnClientConnectedCallback += id =>
+                    {
+                        try
+                        {
+                            if (!string.IsNullOrWhiteSpace(_pendingJoinCodeForServer))
+                            {
+                                var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
+                                lobby?.ResolveAndLoadPackServerRpc(_pendingJoinCodeForServer);
+                                Debug.Log($"[RelayConnector] Forwarded join code to server for pack resolution: {_pendingJoinCodeForServer}");
+                                _pendingJoinCodeForServer = null;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[RelayConnector] Failed to forward join code to server: {ex.Message}");
+                        }
+                    };
                 }
             }
             catch (RequestFailedException rfe)
@@ -192,6 +232,45 @@ namespace BossFight2D.Systems
             {
                 Debug.LogError($"Unexpected error joining client with Relay: {ex.Message}");
                 OnStatus?.Invoke($"Unexpected error: {ex.Message}");
+            }
+        }
+
+        [Preserve]
+        public void ConfigureUserApiBase(string baseUrl)
+        {
+            try
+            {
+                var gsc = GameSessionClient.Instance ?? FindFirstObjectByType<GameSessionClient>();
+                if (gsc == null)
+                {
+                    var go = new GameObject("GameSessionClient");
+                    gsc = go.AddComponent<GameSessionClient>();
+                }
+                gsc.SetUserApiBaseUrl(baseUrl);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[RelayConnector] ConfigureUserApiBase failed: {e.Message}");
+            }
+        }
+
+        [Preserve]
+        public void StartSoloPractice(string packJson)
+        {
+            try
+            {
+                var gsc = GameSessionClient.Instance ?? FindFirstObjectByType<GameSessionClient>();
+                if (gsc == null)
+                {
+                    var go = new GameObject("GameSessionClient");
+                    gsc = go.AddComponent<GameSessionClient>();
+                }
+                gsc.SetAppMode("solo");
+                gsc.InjectPackJson(packJson);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[RelayConnector] StartSoloPractice failed: {e.Message}");
             }
         }
 
@@ -213,6 +292,26 @@ namespace BossFight2D.Systems
             catch (Exception e)
             {
                 Debug.LogWarning($"[RelayConnector] Failed to wire network debug callbacks: {e.Message}");
+            }
+        }
+
+
+        [Preserve]
+        public void ConfigureUserId(string userId)
+        {
+            try
+            {
+                var gsc = GameSessionClient.Instance ?? UnityEngine.Object.FindFirstObjectByType<GameSessionClient>();
+                if (gsc == null)
+                {
+                    var go = new UnityEngine.GameObject("GameSessionClient");
+                    gsc = go.AddComponent<GameSessionClient>();
+                }
+                gsc.SetUserId(userId);
+            }
+            catch (System.Exception e)
+            {
+                UnityEngine.Debug.LogWarning("[RelayConnector] ConfigureUserId failed: " + (e.Message ?? e.ToString()));
             }
         }
     }

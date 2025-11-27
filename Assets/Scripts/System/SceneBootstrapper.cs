@@ -41,6 +41,7 @@ public class SceneBootstrapper : MonoBehaviour
         // Ensure a RelayConnector exists so the Web page can SendMessage("RelayConnector", "JoinWithCode", code)
         // even in scenes that do not contain lobby UI prefabs.
         EnsureRelayConnectorExists();
+        EnsureGameSessionClientExists();
         // If this scene contains a Main Menu, avoid spawning gameplay systems
         var isMainMenu = FindFirstObjectByType<BossFight2D.UI.MainMenuUI>() != null;
         if (isMainMenu)
@@ -76,6 +77,7 @@ public class SceneBootstrapper : MonoBehaviour
         Debug.Log($"[SceneBootstrapper] OnSceneLoaded: name='{scene.name}', mode={mode}");
         TrySetupLobby(scene.name);
         EnsureRelayConnectorExists();
+        EnsureGameSessionClientExists();
         EnsureNetworkEventLoggerExists();
 
         // When Gameplay scene loads on clients, attach a GameplayStartup helper to ensure player spawn/placement
@@ -148,7 +150,7 @@ public class SceneBootstrapper : MonoBehaviour
     private void TrySetupLobby(string sceneName)
     {
         if (_lobbySetupAttempted && SceneManager.GetActiveScene().name == sceneName) return;
-        if (sceneName == "ServerHeadless" || sceneName == "ClientUI")
+        if (sceneName == "ServerHeadless" || sceneName == "ClientUI" || sceneName == "HostUI")
         {
             // Server: do NOT auto-spawn lobby network objects at runtime.
             // Rely on scene-authored LobbyStateManager (NetworkObject) to avoid prefab registration issues.
@@ -407,6 +409,15 @@ public class SceneBootstrapper : MonoBehaviour
         {
             var rcGo = new GameObject("RelayConnector");
             rcGo.AddComponent<RelayConnector>();
+        }
+    }
+
+    private void EnsureGameSessionClientExists()
+    {
+        if (FindFirstObjectByType<GameSessionClient>() == null)
+        {
+            var go = new GameObject("GameSessionClient");
+            go.AddComponent<GameSessionClient>();
         }
     }
 

@@ -27,7 +27,7 @@ namespace BossFight2D.Network
         [SerializeField] private string targetSceneName = "Gameplay";
 
         [Tooltip("If true, auto-load gameplay when at least one client connects and QuizManager is not yet present.")]
-        [SerializeField] private bool autoLoadGameplayIfMissingQuizManager = true;
+        [SerializeField] private bool autoLoadGameplayIfMissingQuizManager = false;
 
         [Tooltip("If true, auto-mark all connected players as ready when QuizManager is Idle. If false, players must ready manually (e.g., via ReadyStation).")]
         [SerializeField] private bool autoReadyAllPlayers = false;

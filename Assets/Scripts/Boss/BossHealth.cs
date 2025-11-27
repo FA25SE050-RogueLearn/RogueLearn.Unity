@@ -1,14 +1,17 @@
 using Unity.Netcode;
 using UnityEngine;
+using BossFight2D.Boss;
+using BossFight2D.Network;
 
 public class BossHealth : NetworkBehaviour
 {
-    [SerializeField] private int maxHealth = 1000;
+    [SerializeField] private int maxHealth = 300;  // MVP: Tuned for 5-8 minute matches with 2-3 players
 
     public delegate void HealthChangedDelegate(int newHealth, int maxHealth);
     public event HealthChangedDelegate OnHealthChanged;
 
     public NetworkVariable<int> currentHealth = new NetworkVariable<int>();
+    private bool _defeated;
 
     public override void OnNetworkSpawn()
     {
@@ -27,11 +30,27 @@ public class BossHealth : NetworkBehaviour
     {
         if (IsServer)
         {
-            currentHealth.Value -= damage;
-            if (currentHealth.Value <= 0)
+            currentHealth.Value = Mathf.Max(0, currentHealth.Value - damage);
+            if (currentHealth.Value <= 0 && !_defeated)
             {
+                _defeated = true;
                 Debug.Log("Boss has been defeated!");
-                // Handle boss death logic here
+                var gm = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>();
+                if (gm != null)
+                {
+                    gm.WinGame();
+                }
+                NetworkGameState.ServerSetWin();
+                var sm = GetComponent<BossStateMachine>();
+                if (sm != null)
+                {
+                    if (sm.animator != null) sm.animator.SetTrigger("Death");
+                    if (sm.combat != null)
+                    {
+                        sm.combat.enabled = false;
+                        if (sm.combat.hitbox != null) sm.combat.hitbox.Deactivate();
+                    }
+                }
             }
         }
     }

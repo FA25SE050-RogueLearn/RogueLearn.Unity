@@ -20,6 +20,8 @@ namespace BossFight2D.Player
         public Animator animator;
         SpriteRenderer sr;
         public bool inputEnabled = true;
+        // Fallback when Cinemachine is unavailable: directly move the main camera to follow
+        private bool _directCameraFollow;
 
         private NetworkVariable<bool> networkFlipX = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
         private NetworkVariable<float> networkSpeed = new NetworkVariable<float>(0f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
@@ -144,10 +146,31 @@ namespace BossFight2D.Player
 
         private void SetupCameraFollow()
         {
-            var camera = FindFirstObjectByType<CinemachineVirtualCamera>();
-            if (camera != null)
+            // Ensure a Cinemachine Brain exists on the main camera so the vcam can drive it.
+            var mainCam = Camera.main;
+            if (mainCam != null)
             {
-                camera.Follow = transform;
+                var brain = mainCam.GetComponent<Cinemachine.CinemachineBrain>();
+                if (brain == null)
+                {
+                    try { mainCam.gameObject.AddComponent<Cinemachine.CinemachineBrain>(); }
+                    catch { /* ignore if Cinemachine not available */ }
+                    Debug.Log("[PlayerController] CinemachineBrain was missing on Main Camera and has been added at runtime.");
+                }
+            }
+
+            var vcam = FindFirstObjectByType<CinemachineVirtualCamera>();
+            if (vcam != null)
+            {
+                vcam.Follow = transform;
+                _directCameraFollow = false;
+                Debug.Log("[PlayerController] Cinemachine vcam follow assigned to local player.");
+            }
+            else
+            {
+                // If no Cinemachine vcam is present, enable simple direct follow as a fallback.
+                _directCameraFollow = true;
+                Debug.LogWarning("[PlayerController] No CinemachineVirtualCamera found. Using direct camera follow fallback for local player.");
             }
         }
 
@@ -156,6 +179,21 @@ namespace BossFight2D.Player
             if (!IsOwner) return;
             // When transitioning to Gameplay, ensure camera follows again
             SetupCameraFollow();
+        }
+
+        void LateUpdate()
+        {
+            // Simple direct-follow fallback if Cinemachine is unavailable
+            if (IsOwner && _directCameraFollow)
+            {
+                var cam = Camera.main;
+                if (cam != null)
+                {
+                    var pos = transform.position;
+                    pos.z = cam.transform.position.z; // preserve camera Z
+                    cam.transform.position = pos;
+                }
+            }
         }
 
     }

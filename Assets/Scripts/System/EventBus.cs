@@ -8,7 +8,7 @@ namespace BossFight2D.Systems
     public static event Action GameWon;
     public static event Action GameLost;
     public static event Action GamePaused; public static event Action GameResumed;
-    public static event Action<QuestionData> QuestionStarted; public static event Action<int, bool> AnswerSubmitted; public static event Action QuestionTimeout;
+    public static event Action<QuestionData> QuestionStarted; public static event Action<int, bool> AnswerSubmitted; public static event Action QuestionTimeout; public static event Action AnswerResolved;
     public static event Action<float> PerfectDodgeWindowStarted;
     public static event Action PerfectDodgeWindowEnded;
     public static event Action PerfectDodgeSuccess;
@@ -30,6 +30,7 @@ namespace BossFight2D.Systems
     public static void RaiseQuestionStarted(QuestionData q) => QuestionStarted?.Invoke(q);
     public static void RaiseAnswerSubmitted(int selected, bool correct) => AnswerSubmitted?.Invoke(selected, correct);
     public static void RaiseQuestionTimeout() => QuestionTimeout?.Invoke();
+    public static void RaiseAnswerResolved() => AnswerResolved?.Invoke();
     // Raisers for new events
     public static void RaisePerfectDodgeWindowStarted(float duration) => PerfectDodgeWindowStarted?.Invoke(duration);
     public static void RaisePerfectDodgeWindowEnded() => PerfectDodgeWindowEnded?.Invoke();

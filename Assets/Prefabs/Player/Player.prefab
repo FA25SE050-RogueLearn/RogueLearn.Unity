@@ -347,7 +347,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fcaa55ec058cba448ac4854052945f48, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hitbox: {fileID: 0}
+  hitbox: {fileID: 6306526378279711933}
   animator: {fileID: 7755899389646713349}
   defaultDamage: 5
   attackCooldown: 0.5

@@ -2,6 +2,7 @@ using System.Linq;
 using UnityEngine;
 using Unity.Netcode;
 using UnityEngine.SceneManagement;
+using Cinemachine;
 
 namespace BossFight2D.Network
 {
@@ -28,6 +29,15 @@ namespace BossFight2D.Network
             // Only run on connected clients
             var nm = NetworkManager.Singleton;
             if (nm == null || !nm.IsClient) return;
+
+            // Headless host runs as a Host to bind Relay, which creates a local client with ServerClientId.
+            // We must skip client-side startup on the headless host to avoid requesting a player spawn
+            // for the server's pseudo-client (which should never have a player).
+            if (Application.isBatchMode && nm.IsHost && nm.LocalClientId == NetworkManager.ServerClientId)
+            {
+                Debug.Log("[GameplayStartup] Skipped on headless host client.");
+                return;
+            }
             StartCoroutine(InitializeRoutine());
         }
 
@@ -35,6 +45,12 @@ namespace BossFight2D.Network
         {
             var nm = NetworkManager.Singleton;
             Debug.Log("[GameplayStartup] InitializeRoutine: begin");
+            if (nm != null)
+            {
+                var localId = nm.LocalClientId;
+                var playerObj = nm.LocalClient != null ? nm.LocalClient.PlayerObject : null;
+                Debug.Log($"[GameplayStartup] LocalClientId={localId}, LocalClient.PlayerObject exists={playerObj != null}");
+            }
 
             // 1) Wait for LobbyStateManager to exist and be network-spawned
             LobbyStateManager lobby = null;
@@ -67,9 +83,28 @@ namespace BossFight2D.Network
                 yield break;
             }
 
-            // 2) Ensure local player NetworkObject exists on server; request spawn if missing
+            // 2) Cleanup any local unspawned player clones (e.g., persisted owner object from prior scene)
+            //    to avoid confusion and duplicate visuals when the real networked player spawns.
+            try
+            {
+                var staleOwned = FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
+                    .Where(pc => pc.IsOwner && pc.NetworkObject != null && !pc.NetworkObject.IsSpawned)
+                    .ToList();
+                foreach (var pc in staleOwned)
+                {
+                    Debug.LogWarning("[GameplayStartup] Destroying stale local owned PlayerController that is not network-spawned.");
+                    Destroy(pc.gameObject);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[GameplayStartup] Failed to cleanup stale local owned players: {ex.Message}");
+            }
+
+            // 3) Ensure local player NetworkObject exists on server; request spawn only if we are certain
+            //    there is no owned player instance on the client and no PlayerObject mapping on the server.
             var localClientId = nm.LocalClientId;
-            var player = nm.SpawnManager.GetPlayerNetworkObject(localClientId);
+            var player = ResolveLocalPlayerObject(nm, localClientId);
             if (player == null)
             {
                 // Fallback: if a local owned PlayerController persisted across the scene load,
@@ -84,12 +119,22 @@ namespace BossFight2D.Network
                 }
                 else
                 {
-                    Debug.Log("[GameplayStartup] Local player not found; requesting server spawn via LobbyStateManager.");
-                    lobby.EnsurePlayerSpawnServerRpc();
+                    // Final guard: double-check SpawnManager mapping in case ownership was established a frame later
+                    var fromSpawnMgrLate = nm.SpawnManager.GetPlayerNetworkObject(localClientId);
+                    if (fromSpawnMgrLate != null && fromSpawnMgrLate.IsSpawned)
+                    {
+                        player = fromSpawnMgrLate;
+                        Debug.Log("[GameplayStartup] Late-resolved PlayerObject via SpawnManager; skipping server spawn.");
+                    }
+                    else
+                    {
+                        Debug.Log("[GameplayStartup] Local player not found; requesting server spawn via LobbyStateManager.");
+                        lobby.EnsurePlayerSpawnServerRpc();
+                    }
                 }
             }
 
-            float waitPlayerSeconds = 5f;
+            float waitPlayerSeconds = 10f;
             float playerElapsed = 0f;
             while (player == null && playerElapsed < waitPlayerSeconds)
             {
@@ -104,18 +149,96 @@ namespace BossFight2D.Network
                 yield break;
             }
 
+            Debug.Log($"[GameplayStartup] Local player object resolved. OwnerClientId={player.OwnerClientId}, IsSpawned={player.IsSpawned}");
+
             // 3) Position the player at a spawn point
             var index = IndexOfClient(localClientId);
             var targetPos = GetSpawnPosition(index);
             Debug.Log($"[GameplayStartup] Placing local player at spawn index {index} -> {targetPos}");
             player.transform.position = targetPos;
+            player.transform.rotation = Quaternion.identity;
 
+            EnsureLocalOwnershipBindings(player);
             // 4) Validate components
             ValidatePlayerComponents(player.gameObject);
 
+            // 5) If a vcam exists and isn't following, attempt to set follow here as a final fallback
+            var vcam = Object.FindFirstObjectByType<Cinemachine.CinemachineVirtualCamera>();
+            if (vcam != null && vcam.Follow == null)
+            {
+                vcam.Follow = player.transform;
+                Debug.Log("[GameplayStartup] Assigned vcam follow to local player (final fallback).");
+            }
+
             Debug.Log("[GameplayStartup] InitializeRoutine: complete");
         }
+        private NetworkObject ResolveLocalPlayerObject(NetworkManager nm, ulong localClientId)
+        {
+            var playerObject = nm.LocalClient != null ? nm.LocalClient.PlayerObject : null;
+            if (playerObject != null && playerObject.IsSpawned)
+            {
+                return playerObject;
+            }
 
+            var fromSpawnManager = nm.SpawnManager.GetPlayerNetworkObject(localClientId);
+            if (fromSpawnManager != null && fromSpawnManager.IsSpawned)
+            {
+                return fromSpawnManager;
+            }
+
+            return null;
+        }
+
+        private void EnsureLocalOwnershipBindings(NetworkObject player)
+        {
+            var localController = player != null ? player.GetComponent<BossFight2D.Player.PlayerController>() : null;
+            if (localController == null)
+            {
+                Debug.LogWarning("[GameplayStartup] Local player NetworkObject has no PlayerController component.");
+                return;
+            }
+
+            if (!localController.IsOwner)
+            {
+                var ownedFallback = FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
+                    .FirstOrDefault(pc => pc != localController && pc.IsOwner);
+                if (ownedFallback != null && ownedFallback.NetworkObject != null)
+                {
+                    Debug.LogWarning("[GameplayStartup] Resolved NetworkObject is not owner. Switching to owned PlayerController instance.");
+                    player = ownedFallback.NetworkObject;
+                    localController = ownedFallback;
+                }
+            }
+
+            // Ensure input remains enabled after scene transition
+            localController.inputEnabled = true;
+
+            // Stop any residual velocity from lobby movement
+            var rb = localController.GetComponent<Rigidbody2D>();
+            if (rb != null)
+            {
+                rb.velocity = Vector2.zero;
+                rb.angularVelocity = 0f;
+            }
+
+            // Force the Cinemachine camera (if present) to follow the owned player
+            try
+            {
+                var vcam = FindFirstObjectByType<CinemachineVirtualCamera>();
+                if (vcam != null)
+                {
+                    vcam.Follow = localController.transform;
+                }
+                else
+                {
+                    Debug.LogWarning("[GameplayStartup] CinemachineVirtualCamera not found when ensuring follow target.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[GameplayStartup] Failed to assign Cinemachine follow target: {ex.Message}");
+            }
+        }
         private int IndexOfClient(ulong clientId)
         {
             var nm = NetworkManager.Singleton;

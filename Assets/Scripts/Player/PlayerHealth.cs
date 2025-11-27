@@ -1,6 +1,7 @@
 using UnityEngine;
 using System;
 using Unity.Netcode;
+using BossFight2D.Network;
 
 namespace BossFight2D.Player {
   public class PlayerHealth : NetworkBehaviour, BossFight2D.Combat.IDamageable {
@@ -29,6 +30,7 @@ namespace BossFight2D.Player {
         {
             OnDeath?.Invoke(); 
             BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>()?.LoseGame();
+            NetworkGameState.ServerSetLose();
         }
     }
 

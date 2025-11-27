@@ -30,9 +30,9 @@ namespace BossFight2D.UI
     public bool autoCreateUI = true;
     [Header("Scenes")]
     [Tooltip("If set, Main Menu button will load this scene.")]
-    public string mainMenuSceneName;
+    public string mainMenuSceneName = "ClientUI";
 
-    Canvas _canvas; GameObject _winPanel; GameObject _losePanel;
+    Canvas _canvas; GameObject _winPanel; GameObject _losePanel; UnityEngine.UI.Text _winSummary; UnityEngine.UI.Text _loseSummary;
     AudioSource _audio;
 
     void Awake()
@@ -71,8 +71,8 @@ namespace BossFight2D.UI
         }
       }
     }
-    void OnGameWon() { EnsureUIBuilt(); HideAll(); if (_winPanel != null) { _winPanel.SetActive(true); } if (winMusic == null) winMusic = GetDefaultWinMusic(); PlayClip(winMusic); }
-    void OnGameLost() { EnsureUIBuilt(); HideAll(); if (_losePanel != null) { _losePanel.SetActive(true); } if (loseMusic == null) loseMusic = GetDefaultLoseMusic(); PlayClip(loseMusic); }
+    void OnGameWon() { EnsureUIBuilt(); HideAll(); if (_winPanel != null) { _winPanel.SetActive(true); PopulateSummary(true); } if (winMusic == null) winMusic = GetDefaultWinMusic(); PlayClip(winMusic); }
+    void OnGameLost() { EnsureUIBuilt(); HideAll(); if (_losePanel != null) { _losePanel.SetActive(true); PopulateSummary(false); } if (loseMusic == null) loseMusic = GetDefaultLoseMusic(); PlayClip(loseMusic); }
 
     void PlayClip(AudioClip clip) { if (clip == null) return; if (_audio != null) { _audio.clip = clip; _audio.loop = false; _audio.Play(); } }
     void StopMusic() { if (_audio != null && _audio.isPlaying) _audio.Stop(); }
@@ -136,6 +136,12 @@ namespace BossFight2D.UI
       var titleText = titleGO.GetComponent<Text>(); titleText.text = title; titleText.color = Color.white; titleText.alignment = TextAnchor.MiddleCenter; titleText.fontSize = 44; if (uiFont != null) titleText.font = uiFont;
       var trt = titleGO.GetComponent<RectTransform>(); trt.anchorMin = new Vector2(0.1f, 0.6f); trt.anchorMax = new Vector2(0.9f, 0.85f); trt.offsetMin = Vector2.zero; trt.offsetMax = Vector2.zero;
 
+      var sumGO = new GameObject("Summary", typeof(RectTransform), typeof(Text));
+      sumGO.transform.SetParent(panel.transform, false);
+      var sumText = sumGO.GetComponent<Text>(); sumText.text = ""; sumText.color = Color.white; sumText.alignment = TextAnchor.UpperLeft; sumText.fontSize = 24; if (uiFont != null) sumText.font = uiFont;
+      var srt = sumGO.GetComponent<RectTransform>(); srt.anchorMin = new Vector2(0.1f, 0.35f); srt.anchorMax = new Vector2(0.9f, 0.6f); srt.offsetMin = Vector2.zero; srt.offsetMax = Vector2.zero;
+      if (isWin) _winSummary = sumText; else _loseSummary = sumText;
+
       // Buttons row
       var retryBtn = BuildButton(panel.transform, "Retry", new Vector2(0.15f, 0.2f), new Vector2(0.45f, 0.35f));
       retryBtn.onClick.AddListener(OnRetryClicked);
@@ -169,7 +175,7 @@ namespace BossFight2D.UI
     void OnMainMenuClicked()
     {
       // If a scene name is provided, load it (separate Gameplay/MainMenu scenes)
-      if (!string.IsNullOrEmpty(mainMenuSceneName))
+      if (!string.IsNullOrEmpty(mainMenuSceneName) && Application.CanStreamedLevelBeLoaded(mainMenuSceneName))
       {
         StopMusic();
         SceneManager.LoadScene(mainMenuSceneName);
@@ -218,6 +224,38 @@ namespace BossFight2D.UI
       };
       foreach (var path in candidates) { var font = Resources.Load<Font>(path); if (font != null) return font; }
       return null;
+    }
+
+    void PopulateSummary(bool isWin)
+    {
+      var gsc = BossFight2D.Systems.GameSessionClient.Instance;
+      string res = string.Empty; string ts = string.Empty; BossFight2D.Systems.GameSessionClient.SummaryData sd = null;
+      if (gsc != null && gsc.TryGetLatestCompletion(out res, out ts, out sd))
+      {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("Result: "); sb.Append(string.IsNullOrEmpty(res) ? (isWin ? "win" : "lose") : res); sb.Append("\n");
+        if (!string.IsNullOrEmpty(ts)) { sb.Append("Time: "); sb.Append(ts); sb.Append("\n"); }
+        if (sd != null && sd.topics != null && sd.topics.Count > 0)
+        {
+          foreach (var t in sd.topics) { sb.Append(t.topic); sb.Append(": "); sb.Append(t.correct); sb.Append("/"); sb.Append(t.total); sb.Append("\n"); }
+        }
+        var label = isWin ? _winSummary : _loseSummary; if (label != null) label.text = sb.ToString();
+        return;
+      }
+      if (gsc != null)
+      {
+        gsc.StartCoroutine(gsc.FetchResultFromBackend((r, tt, s) =>
+        {
+          var sb = new System.Text.StringBuilder();
+          sb.Append("Result: "); sb.Append(string.IsNullOrEmpty(r) ? (isWin ? "win" : "lose") : r); sb.Append("\n");
+          if (!string.IsNullOrEmpty(tt)) { sb.Append("Time: "); sb.Append(tt); sb.Append("\n"); }
+          if (s != null && s.topics != null && s.topics.Count > 0)
+          {
+            foreach (var t in s.topics) { sb.Append(t.topic); sb.Append(": "); sb.Append(t.correct); sb.Append("/"); sb.Append(t.total); sb.Append("\n"); }
+          }
+          var label = isWin ? _winSummary : _loseSummary; if (label != null) label.text = sb.ToString();
+        }));
+      }
     }
   }
 }

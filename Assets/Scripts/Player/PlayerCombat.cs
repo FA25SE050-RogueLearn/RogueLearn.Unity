@@ -6,6 +6,7 @@ using BossFight2D.Combat;
 using BossFight2D.Quiz;
 using BossFight2D.Systems;
 using UnityEngine.EventSystems;
+using TMPro;
 
 namespace BossFight2D.Player
 {
@@ -70,6 +71,15 @@ namespace BossFight2D.Player
                 hitboxForwardOffset = Mathf.Abs(_hitboxDefaultLocalPosition.x);
                 hitboxUpOffset = _hitboxDefaultLocalPosition.y;
             }
+            if (chargesUIPlaceholder == null)
+            {
+                //find  object in the hierarchy with the name "AttackCharge"
+                chargesUIPlaceholder = GameObject.Find("AttackCharge");
+                if (chargesUIPlaceholder == null)
+                {
+                    Debug.LogError("PlayerCombat: Could not find ChargesUI placeholder. Please add a child object with the name 'ChargesUI' to the player prefab.");
+                }
+            }
         }
 
         public override void OnNetworkSpawn()
@@ -84,6 +94,18 @@ namespace BossFight2D.Player
                 EventBus.AnswerModeExited += OnAnswerModeExited;
                 EventBus.PowerPlayStarted += OnPowerPlayStarted;
                 EventBus.PowerPlayEnded += OnPowerPlayEnded;
+            }
+            // Server-side: enforce consistent combat config to avoid prefab mismatch across host vs client
+            if (IsServer)
+            {
+                // Temporary safeguard: unify cost and max across all spawned players
+                // to prevent unexpected 3-per-attack consumption on remote clients.
+                if (chargeCostPerAttack != 1 || maxAttackCharges != 3)
+                {
+                    Debug.LogWarning($"[PlayerCombat][Server] Overriding combat config for client {OwnerClientId}: cost {chargeCostPerAttack} -> 1, max {maxAttackCharges} -> 3");
+                }
+                chargeCostPerAttack = 1;
+                maxAttackCharges = 3;
             }
         }
 
@@ -138,13 +160,16 @@ namespace BossFight2D.Player
         [ServerRpc]
         private void RequestAttackServerRpc()
         {
-            if (attackCharges.Value >= chargeCostPerAttack)
+            // Clamp cost to a sane range in case of out-of-range inspector values
+            int cost = Mathf.Clamp(chargeCostPerAttack, 1, maxAttackCharges);
+            int before = attackCharges.Value;
+            Debug.Log($"[PlayerCombat][Server] Attack requested by client {OwnerClientId}: before={before}, cost={cost}, max={maxAttackCharges}");
+            if (attackCharges.Value >= cost)
             {
-                attackCharges.Value -= chargeCostPerAttack;
+                attackCharges.Value -= cost;
                 _nextAttackAllowed = Time.time + attackCooldown;
-
-
-
+                int after = attackCharges.Value;
+                Debug.Log($"[PlayerCombat][Server] Attack processed for client {OwnerClientId}: after={after}");
                 // Trigger attack animation on all clients
                 AttackClientRpc();
             }
@@ -285,7 +310,9 @@ namespace BossFight2D.Player
         {
             if (IsServer)
             {
+                int before = attackCharges.Value;
                 attackCharges.Value = Mathf.Clamp(attackCharges.Value + chargesPerCorrect, 0, maxAttackCharges);
+                Debug.Log($"[PlayerCombat][Server] AwardCharges to client {OwnerClientId}: before={before}, +{chargesPerCorrect} -> {attackCharges.Value} (max={maxAttackCharges})");
             }
         }
 
@@ -294,18 +321,20 @@ namespace BossFight2D.Player
         {
             if (IsServer)
             {
+                int before = attackCharges.Value;
                 attackCharges.Value = maxAttackCharges;
+                Debug.Log($"[PlayerCombat][Server] FillChargesToMax for client {OwnerClientId}: before={before} -> {attackCharges.Value}");
             }
         }
 
         void UpdateChargesUI()
         {
             if (chargesUIPlaceholder == null) return;
-            var txt = chargesUIPlaceholder.GetComponent<Text>();
+            var txt = chargesUIPlaceholder.GetComponentInChildren<TextMeshProUGUI>();
             if (txt != null) { txt.text = $"Charges: {attackCharges.Value}/{maxAttackCharges}"; return; }
-            var slider = chargesUIPlaceholder.GetComponent<Slider>();
+            var slider = chargesUIPlaceholder.GetComponentInChildren<Slider>();
             if (slider != null) { slider.maxValue = Mathf.Max(1, maxAttackCharges); slider.value = attackCharges.Value; return; }
-            var img = chargesUIPlaceholder.GetComponent<Image>();
+            var img = chargesUIPlaceholder.GetComponentInChildren<Image>();
             if (img != null)
             {
                 float pct = Mathf.Clamp01(maxAttackCharges > 0 ? (float)attackCharges.Value / maxAttackCharges : 0f);
