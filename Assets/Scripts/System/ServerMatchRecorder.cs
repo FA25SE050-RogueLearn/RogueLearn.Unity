@@ -7,6 +7,7 @@ using UnityEngine;
 using Unity.Netcode;
 using BossFight2D.Systems;
 using BossFight2D.Quiz;
+using BossFight2D.Network;
 
 namespace BossFight2D.Systems
 {
@@ -59,6 +60,7 @@ namespace BossFight2D.Systems
         public class MatchSummary
         {
             public string matchId;
+            public string userId; // Supabase user ID of the match host
             public string startUtc;
             public string endUtc;
             public string result; // "win" or "lose"
@@ -85,20 +87,29 @@ namespace BossFight2D.Systems
 
         private void Awake()
         {
+            Debug.Log($"[ServerMatchRecorder] Awake - isBatchMode: {Application.isBatchMode}");
+
             if (!Application.isBatchMode)
             {
                 // Only run in server/headless contexts
+                Debug.Log("[ServerMatchRecorder] Not in batch mode, disabling");
                 enabled = false;
                 return;
             }
+
             DontDestroyOnLoad(gameObject);
             _startTimeUtc = DateTime.UtcNow;
             _matchId = Guid.NewGuid().ToString("N");
+
+            Debug.Log($"[ServerMatchRecorder] Initialized - MatchID: {_matchId}");
+            Debug.Log("[ServerMatchRecorder] Subscribing to EventBus events");
 
             EventBus.GameWon += OnGameWon;
             EventBus.GameLost += OnGameLost;
             EventBus.QuestionStarted += OnQuestionStarted;
             EventBus.AnswerResolved += OnAnswerResolved;
+
+            Debug.Log("[ServerMatchRecorder] Ready to track match");
         }
 
         private void OnDestroy()
@@ -111,22 +122,36 @@ namespace BossFight2D.Systems
 
         private void OnQuestionStarted(QuestionData question)
         {
+            Debug.Log($"[ServerMatchRecorder] OnQuestionStarted - Question ID: {question.id}, Topic: {question.topic}");
             _currentQuestion = question;
             _questionStartTimes[question.id] = DateTime.UtcNow;
         }
 
         private void OnAnswerResolved()
         {
-            if (_currentQuestion == null) return;
+            Debug.Log($"[ServerMatchRecorder] OnAnswerResolved - Current question: {(_currentQuestion != null ? _currentQuestion.id.ToString() : "NULL")}");
+
+            if (_currentQuestion == null)
+            {
+                Debug.LogWarning("[ServerMatchRecorder] OnAnswerResolved called but _currentQuestion is null!");
+                return;
+            }
 
             // Collect player answers from QuizManager
             var quizManager = QuizManager.Instance;
-            if (quizManager == null) return;
+            if (quizManager == null)
+            {
+                Debug.LogWarning("[ServerMatchRecorder] QuizManager.Instance is null!");
+                return;
+            }
 
             var playerAnswers = new List<PlayerAnswer>();
             var endTime = DateTime.UtcNow;
+            var answers = quizManager.GetPlayerAnswers();
 
-            foreach (var kvp in quizManager.GetPlayerAnswers())
+            Debug.Log($"[ServerMatchRecorder] GetPlayerAnswers returned {answers.Count} entries");
+
+            foreach (var kvp in answers)
             {
                 ulong playerId = kvp.Key;
                 int chosenAnswer = kvp.Value;
@@ -137,6 +162,8 @@ namespace BossFight2D.Systems
                 {
                     timeToAnswer = (float)(endTime - startTime).TotalSeconds;
                 }
+
+                Debug.Log($"[ServerMatchRecorder] Player {playerId} answered {chosenAnswer} (correct: {correct})");
 
                 playerAnswers.Add(new PlayerAnswer
                 {
@@ -157,6 +184,7 @@ namespace BossFight2D.Systems
                 playerAnswers = playerAnswers.ToArray()
             });
 
+            Debug.Log($"[ServerMatchRecorder] Recorded question result. Total questions: {_questionResults.Count}");
             _currentQuestion = null;
         }
 
@@ -284,6 +312,9 @@ namespace BossFight2D.Systems
 
         private void WriteSummary(string result)
         {
+            Debug.Log($"[ServerMatchRecorder] WriteSummary called - result: {result}");
+            Debug.Log($"[ServerMatchRecorder] Tracked {_questionResults.Count} questions via events");
+
             if (_written) return;
             _written = true;
 
@@ -304,37 +335,60 @@ namespace BossFight2D.Systems
                     }
                 }
 
-                // MVP: Get summary data from QuizManager (same as GameSessionClient does)
-                var quizManager = BossFight2D.Quiz.QuizManager.Instance;
+                Debug.Log($"[ServerMatchRecorder] Found {players.Count} player(s): {string.Join(", ", players)}");
 
-                // Compute per-player summaries using QuizManager data
+                // Compute INDIVIDUAL per-player summaries from QuizManager
+                // QuizManager has the authoritative stats data
+                var quizManager = QuizManager.Instance;
+                Debug.Log($"[ServerMatchRecorder] QuizManager.Instance: {(quizManager != null ? "Available" : "NULL")}");
+
                 var playerSummaries = ComputePlayerSummariesFromQuizManager(players, quizManager);
 
-                var summary = new MatchSummary
-                {
-                    matchId = _matchId,
-                    startUtc = _startTimeUtc.ToString("o"),
-                    endUtc = DateTime.UtcNow.ToString("o"),
-                    result = result,
-                    scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
-                    relayRegion = Environment.GetEnvironmentVariable("RELAY_REGION") ?? string.Empty,
-                    joinCode = string.Empty, // Not currently available programmatically here
-                    totalPlayers = players.Count,
-                    hostClientId = nm != null ? nm.LocalClientId : 0,
-                    playerClientIds = players.ToArray(),
-                    questions = _questionResults.ToArray(), // Keep for backwards compatibility
-                    playerSummaries = playerSummaries
-                };
+                Debug.Log($"[ServerMatchRecorder] Computed {playerSummaries.Length} player summaries");
 
-                // MVP: Post match results to backend API (database storage for production)
-                // Use USER_API_BASE (same as GameSessionClient) to support Docker with host.docker.internal
+                // POST SEPARATE MATCH RESULTS FOR EACH PLAYER
+                // This allows each player to see only their own stats in the stats page
                 var backendUrl = Environment.GetEnvironmentVariable("USER_API_BASE") ?? "http://localhost:5051";
                 var apiEndpoint = $"{backendUrl}/api/quests/game/sessions/unity-match-result";
 
-                var json = JsonUtility.ToJson(summary, true);
+                foreach (var playerSummary in playerSummaries)
+                {
+                    ulong clientId = playerSummary.playerId;
 
-                // Use UnityWebRequest to POST to backend
-                StartCoroutine(PostMatchResultToBackend(apiEndpoint, json));
+                    // Get the userId for this client from PlayerIdentity mapping
+                    string userId = PlayerIdentity.GetUserIdForClient(clientId);
+
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        Debug.LogWarning($"[ServerMatchRecorder] No userId found for clientId {clientId}, skipping match result");
+                        continue;
+                    }
+
+                    // Create a match summary for this specific player with ONLY their stats
+                    var summary = new MatchSummary
+                    {
+                        matchId = _matchId,
+                        userId = userId, // This player's Supabase userId
+                        startUtc = _startTimeUtc.ToString("o"),
+                        endUtc = DateTime.UtcNow.ToString("o"),
+                        result = result,
+                        scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
+                        relayRegion = Environment.GetEnvironmentVariable("RELAY_REGION") ?? string.Empty,
+                        joinCode = string.Empty,
+                        totalPlayers = players.Count,
+                        hostClientId = nm != null ? nm.LocalClientId : 0,
+                        playerClientIds = players.ToArray(),
+                        questions = _questionResults.ToArray(),
+                        playerSummaries = new PlayerSummary[] { playerSummary } // Only this player's stats
+                    };
+
+                    var json = JsonUtility.ToJson(summary, true);
+
+                    Debug.Log($"[ServerMatchRecorder] Posting match result for userId '{userId}' (clientId {clientId})");
+
+                    // Post this player's match result
+                    StartCoroutine(PostMatchResultToBackend(apiEndpoint, json));
+                }
             }
             catch (Exception ex)
             {

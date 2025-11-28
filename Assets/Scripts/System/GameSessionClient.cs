@@ -159,6 +159,14 @@ namespace BossFight2D.Systems
             if (!string.IsNullOrWhiteSpace(id)) userId = id.Trim();
         }
 
+        /// <summary>
+        /// Get the userId for this client
+        /// </summary>
+        public string GetUserId()
+        {
+            return userId;
+        }
+
         [Preserve]
         public void InjectPackJson(string json)
         {
