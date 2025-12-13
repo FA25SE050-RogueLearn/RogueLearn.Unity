@@ -23,7 +23,7 @@ namespace BossFight2D.Network
 
             _cts = new CancellationTokenSource();
             int port = 0;
-            var env = Environment.GetEnvironmentVariable("HEALTH_PORT");
+            var env = System.Environment.GetEnvironmentVariable("HEALTH_PORT");
             if (!int.TryParse(env, out port) || port <= 0) port = 8080;
             var prefix = $"http://*:{port}/";
 

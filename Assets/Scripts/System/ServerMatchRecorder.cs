@@ -42,6 +42,7 @@ namespace BossFight2D.Systems
         public class PlayerSummary
         {
             public ulong playerId;
+            public string userId;
             public int totalQuestions;
             public int correctAnswers;
             public float averageTime;
@@ -79,6 +80,7 @@ namespace BossFight2D.Systems
         private DateTime _startTimeUtc;
         private bool _written;
         private string _matchId;
+        private string _relayJoinCode = string.Empty;
 
         // MVP: Track questions and answers during match
         private List<QuestionResult> _questionResults = new List<QuestionResult>();
@@ -100,6 +102,13 @@ namespace BossFight2D.Systems
             DontDestroyOnLoad(gameObject);
             _startTimeUtc = DateTime.UtcNow;
             _matchId = Guid.NewGuid().ToString("N");
+
+            var envJoin = System.Environment.GetEnvironmentVariable("RELAY_JOIN_CODE") ?? System.Environment.GetEnvironmentVariable("RL_RELAY_JOIN_CODE");
+            if (!string.IsNullOrWhiteSpace(envJoin))
+            {
+                _relayJoinCode = envJoin.Trim();
+                Debug.Log($"[ServerMatchRecorder] Using relay join code from env");
+            }
 
             Debug.Log($"[ServerMatchRecorder] Initialized - MatchID: {_matchId}");
             Debug.Log("[ServerMatchRecorder] Subscribing to EventBus events");
@@ -310,6 +319,31 @@ namespace BossFight2D.Systems
             }
         }
 
+        private string ResolveBackendBaseUrl()
+        {
+            string ResolveFromEnv(params string[] keys)
+            {
+                foreach (var k in keys)
+                {
+                    var v = System.Environment.GetEnvironmentVariable(k);
+                    if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
+                }
+                return string.Empty;
+            }
+
+            // Prefer explicit Unity overrides, then shared frontend/backend vars
+            var backendUrl = ResolveFromEnv(
+                "RL_DOCKER_USER_API_BASE",
+                "USER_API_BASE",
+                "NEXT_PUBLIC_API_URL",
+                "NEXT_PUBLIC_USER_API_URL",
+                "API_URL");
+
+            return string.IsNullOrWhiteSpace(backendUrl)
+                ? string.Empty
+                : backendUrl.Trim().TrimEnd('/');
+        }
+
         private void WriteSummary(string result)
         {
             Debug.Log($"[ServerMatchRecorder] WriteSummary called - result: {result}");
@@ -348,47 +382,51 @@ namespace BossFight2D.Systems
 
                 // POST SEPARATE MATCH RESULTS FOR EACH PLAYER
                 // This allows each player to see only their own stats in the stats page
-                var backendUrl = Environment.GetEnvironmentVariable("USER_API_BASE") ?? "http://localhost:5051";
+                var backendUrl = ResolveBackendBaseUrl();
+                if (string.IsNullOrWhiteSpace(backendUrl))
+                {
+                    Debug.LogError("[ServerMatchRecorder] USER_API_BASE/NEXT_PUBLIC_USER_API_URL is not set; cannot post match results.");
+                    return;
+                }
                 var apiEndpoint = $"{backendUrl}/api/quests/game/sessions/unity-match-result";
 
-                foreach (var playerSummary in playerSummaries)
+                // Prefer session id resolved by GameSessionClient so matchId aligns with backend session
+                var sessionIdFromClient = GameSessionClient.Instance != null ? GameSessionClient.Instance.SessionId : string.Empty;
+                var resolvedMatchId = !string.IsNullOrWhiteSpace(sessionIdFromClient) ? sessionIdFromClient : _matchId;
+                var resolvedJoinCode = !string.IsNullOrWhiteSpace(_relayJoinCode)
+                    ? _relayJoinCode
+                    : (GameSessionClient.Instance != null ? GameSessionClient.Instance.LastJoinCode : string.Empty);
+
+                // Stamp userIds per player from PlayerIdentity (guests allowed => empty string)
+                foreach (var ps in playerSummaries)
                 {
-                    ulong clientId = playerSummary.playerId;
-
-                    // Get the userId for this client from PlayerIdentity mapping
-                    string userId = PlayerIdentity.GetUserIdForClient(clientId);
-
-                    if (string.IsNullOrEmpty(userId))
-                    {
-                        Debug.LogWarning($"[ServerMatchRecorder] No userId found for clientId {clientId}, skipping match result");
-                        continue;
-                    }
-
-                    // Create a match summary for this specific player with ONLY their stats
-                    var summary = new MatchSummary
-                    {
-                        matchId = _matchId,
-                        userId = userId, // This player's Supabase userId
-                        startUtc = _startTimeUtc.ToString("o"),
-                        endUtc = DateTime.UtcNow.ToString("o"),
-                        result = result,
-                        scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
-                        relayRegion = Environment.GetEnvironmentVariable("RELAY_REGION") ?? string.Empty,
-                        joinCode = string.Empty,
-                        totalPlayers = players.Count,
-                        hostClientId = nm != null ? nm.LocalClientId : 0,
-                        playerClientIds = players.ToArray(),
-                        questions = _questionResults.ToArray(),
-                        playerSummaries = new PlayerSummary[] { playerSummary } // Only this player's stats
-                    };
-
-                    var json = JsonUtility.ToJson(summary, true);
-
-                    Debug.Log($"[ServerMatchRecorder] Posting match result for userId '{userId}' (clientId {clientId})");
-
-                    // Post this player's match result
-                    StartCoroutine(PostMatchResultToBackend(apiEndpoint, json));
+                    var mappedUserId = PlayerIdentity.GetUserIdForClient(ps.playerId);
+                    ps.userId = string.IsNullOrWhiteSpace(mappedUserId) ? string.Empty : mappedUserId;
                 }
+
+                // Build a single combined payload with all player summaries
+                var matchUserId = playerSummaries.FirstOrDefault(ps => !string.IsNullOrEmpty(ps.userId))?.userId ?? string.Empty;
+
+                var summaryCombined = new MatchSummary
+                {
+                    matchId = resolvedMatchId,
+                    userId = matchUserId,
+                    startUtc = _startTimeUtc.ToString("o"),
+                    endUtc = DateTime.UtcNow.ToString("o"),
+                    result = result,
+                    scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
+                    relayRegion = System.Environment.GetEnvironmentVariable("RELAY_REGION") ?? string.Empty,
+                    joinCode = resolvedJoinCode ?? string.Empty,
+                    totalPlayers = players.Count,
+                    hostClientId = nm != null ? nm.LocalClientId : 0,
+                    playerClientIds = players.ToArray(),
+                    questions = _questionResults.ToArray(),
+                    playerSummaries = playerSummaries
+                };
+
+                var combinedJson = JsonUtility.ToJson(summaryCombined, true);
+                Debug.Log($"[ServerMatchRecorder] Posting combined match result with {playerSummaries.Length} player summaries to backend");
+                StartCoroutine(PostMatchResultToBackend(apiEndpoint, combinedJson));
             }
             catch (Exception ex)
             {
@@ -415,7 +453,7 @@ namespace BossFight2D.Systems
 
                 if (request.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
                 {
-                    Debug.Log($"[ServerMatchRecorder] Successfully posted match result to database. Response: {request.downloadHandler.text}");
+                    Debug.Log($"[ServerMatchRecorder] Successfully posted match result to backend. Response: {request.downloadHandler.text}");
                 }
                 else
                 {

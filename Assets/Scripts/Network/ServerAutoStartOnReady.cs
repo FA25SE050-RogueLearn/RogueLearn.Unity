@@ -46,7 +46,7 @@ namespace BossFight2D.Network
             // Optional environment-driven configuration for headless server behavior
             try
             {
-                var autoloadEnv = Environment.GetEnvironmentVariable("HEADLESS_AUTOLOAD_ON_FIRST_CLIENT");
+                var autoloadEnv = System.Environment.GetEnvironmentVariable("HEADLESS_AUTOLOAD_ON_FIRST_CLIENT");
                 if (!string.IsNullOrWhiteSpace(autoloadEnv))
                 {
                     autoLoadGameplayIfMissingQuizManager =
@@ -54,19 +54,19 @@ namespace BossFight2D.Network
                 }
 
                 // Optional: control whether to auto mark players ready
-                var autoReadyEnv = Environment.GetEnvironmentVariable("HEADLESS_AUTO_READY_ALL");
+                var autoReadyEnv = System.Environment.GetEnvironmentVariable("HEADLESS_AUTO_READY_ALL");
                 if (!string.IsNullOrWhiteSpace(autoReadyEnv))
                 {
                     autoReadyAllPlayers = autoReadyEnv.Equals("1") || autoReadyEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
                 }
 
-                var gameplayEnv = Environment.GetEnvironmentVariable("GAMEPLAY_SCENE");
+                var gameplayEnv = System.Environment.GetEnvironmentVariable("GAMEPLAY_SCENE");
                 if (!string.IsNullOrWhiteSpace(gameplayEnv))
                 {
                     targetSceneName = gameplayEnv;
                 }
 
-                var delayEnv = Environment.GetEnvironmentVariable("AUTO_READY_DELAY_SECONDS");
+                var delayEnv = System.Environment.GetEnvironmentVariable("AUTO_READY_DELAY_SECONDS");
                 if (!string.IsNullOrWhiteSpace(delayEnv) && float.TryParse(delayEnv, out var delay))
                 {
                     // Clamp to a reasonable range to avoid pathological values

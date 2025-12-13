@@ -151,7 +151,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1166e5552cc95204a997b744ef94a329, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  userApiBaseUrl: https://host.docker.internal:5051
+  userApiBaseUrl: 
   lastJoinCode: 
   sessionId: 
   packUrl: 

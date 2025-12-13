@@ -39,7 +39,7 @@ namespace BossFight2D.Network
             {
                 // Optionally force-load a server scene that contains NetworkManager.
                 // You can override via env var UNITY_SERVER_SCENE; defaults to ServerHeadless.
-                string serverScene = Environment.GetEnvironmentVariable("UNITY_SERVER_SCENE");
+                string serverScene = System.Environment.GetEnvironmentVariable("UNITY_SERVER_SCENE");
                 // Default to ServerHeadless so host stays in server-only scene; clients will show lobby UI overlay.
                 if (string.IsNullOrWhiteSpace(serverScene)) serverScene = "ServerHeadless";
                 Debug.Log($"[ServerBootstrap] Loading server scene: {serverScene}");
@@ -48,14 +48,14 @@ namespace BossFight2D.Network
                 await InitializeUnityServicesAsync();
 
                 // Read optional env vars to control Relay region and max connections.
-                var maxConnEnv = Environment.GetEnvironmentVariable("RL_MAX_CONNECTIONS");
+                var maxConnEnv = System.Environment.GetEnvironmentVariable("RL_MAX_CONNECTIONS");
                 int maxConn = MaxConnections;
                 if (!string.IsNullOrWhiteSpace(maxConnEnv) && int.TryParse(maxConnEnv, out var parsed))
                 {
                     maxConn = Mathf.Clamp(parsed, 2, 100);
                 }
 
-                var relayRegion = Environment.GetEnvironmentVariable("RELAY_REGION");
+                var relayRegion = System.Environment.GetEnvironmentVariable("RELAY_REGION");
                 Allocation allocation;
                 if (!string.IsNullOrWhiteSpace(relayRegion))
                 {

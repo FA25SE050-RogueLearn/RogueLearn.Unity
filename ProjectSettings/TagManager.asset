@@ -39,6 +39,27 @@ TagManager:
   - 
   - 
   m_SortingLayers:
+  - name: Ground
+    uniqueID: 2214013297
+    locked: 0
   - name: Default
     uniqueID: 0
+    locked: 0
+  - name: GroundDetails
+    uniqueID: 843016299
+    locked: 0
+  - name: Shadows
+    uniqueID: 2434120331
+    locked: 0
+  - name: DynamicObjects
+    uniqueID: 4140948299
+    locked: 0
+  - name: Overhead
+    uniqueID: 15202303
+    locked: 0
+  - name: Effects
+    uniqueID: 3973451835
+    locked: 0
+  - name: UI
+    uniqueID: 1673165745
     locked: 0

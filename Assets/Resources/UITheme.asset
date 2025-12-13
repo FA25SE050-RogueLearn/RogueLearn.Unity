@@ -1,0 +1,55 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b5273b46989f2164eac69b04428e6ece, type: 3}
+  m_Name: UITheme
+  m_EditorClassIdentifier: 
+  backgroundDark: {r: 0.12, g: 0.16, b: 0.22, a: 1}
+  backgroundMedium: {r: 0.16, g: 0.2, b: 0.27, a: 1}
+  backgroundLight: {r: 0.2, g: 0.24, b: 0.32, a: 1}
+  primaryBlue: {r: 0.23, g: 0.51, b: 0.96, a: 1}
+  primaryPurple: {r: 0.55, g: 0.36, b: 0.95, a: 1}
+  successGreen: {r: 0.06, g: 0.72, b: 0.51, a: 1}
+  warningOrange: {r: 0.96, g: 0.62, b: 0.04, a: 1}
+  errorRed: {r: 0.94, g: 0.27, b: 0.27, a: 1}
+  textPrimary: {r: 1, g: 1, b: 1, a: 1}
+  textSecondary: {r: 0.9, g: 0.91, b: 0.92, a: 1}
+  textDisabled: {r: 0.61, g: 0.64, b: 0.69, a: 1}
+  buttonNormal: {r: 0.2, g: 0.23, b: 0.3, a: 1}
+  buttonHover: {r: 0.23, g: 0.51, b: 0.96, a: 0.8}
+  buttonPressed: {r: 0.23, g: 0.51, b: 0.96, a: 1}
+  buttonDisabled: {r: 0.2, g: 0.23, b: 0.3, a: 0.5}
+  overlayDark: {r: 0, g: 0, b: 0, a: 0.75}
+  overlayMedium: {r: 0, g: 0, b: 0, a: 0.5}
+  overlayLight: {r: 0, g: 0, b: 0, a: 0.25}
+  fontSizeHuge: 48
+  fontSizeLarge: 36
+  fontSizeMedium: 28
+  fontSizeRegular: 24
+  fontSizeSmall: 18
+  spacingTiny: 5
+  spacingSmall: 10
+  spacingMedium: 20
+  spacingLarge: 40
+  spacingHuge: 60
+  borderRadiusSmall: 4
+  borderRadiusMedium: 8
+  borderRadiusLarge: 12
+  transitionFast: 0.1
+  transitionNormal: 0.2
+  transitionSlow: 0.3
+  healthHigh: {r: 0.2, g: 0.9, b: 0.2, a: 1}
+  healthMedium: {r: 0.96, g: 0.62, b: 0.04, a: 1}
+  healthLow: {r: 0.94, g: 0.27, b: 0.27, a: 1}
+  healthBackground: {r: 0.2, g: 0.23, b: 0.3, a: 0.5}
+  timerNormal: {r: 0.23, g: 0.51, b: 0.96, a: 1}
+  timerWarning: {r: 0.96, g: 0.62, b: 0.04, a: 1}
+  timerCritical: {r: 0.94, g: 0.27, b: 0.27, a: 1}

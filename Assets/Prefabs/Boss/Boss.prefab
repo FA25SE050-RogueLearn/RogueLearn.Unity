@@ -19,6 +19,7 @@ GameObject:
   - component: {fileID: 1415216586418624027}
   - component: {fileID: 2295817760512323066}
   - component: {fileID: 7476232988521014327}
+  - component: {fileID: 7790873723055352753}
   m_Layer: 0
   m_Name: Boss
   m_TagString: Boss
@@ -149,6 +150,10 @@ MonoBehaviour:
   hitbox: {fileID: 2299391394175559117}
   windup: 0.4
   hitboxWindow: 0.4
+  attackCooldownSeconds: 0.6
+  punishAttackCooldownSeconds: 1
+  punishWindupMultiplier: 2
+  punishHitboxWindowMultiplier: 0.75
   playerTransform: {fileID: 0}
   useAnimationEvents: 1
   debugTelegraphColor: {r: 1, g: 0.92156863, b: 0.015686275, a: 1}
@@ -319,6 +324,23 @@ MonoBehaviour:
     TriggerNameHash: 1080829965
     TransitionIndex: 0
   m_Animator: {fileID: 6680802172296504838}
+--- !u!114 &7790873723055352753
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5635659168999775891}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f6eb38a32414be64690eb3ae35874fde, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sortingLayerName: DynamicObjects
+  sortingOrderOffset: 0
+  updateEveryFrame: 1
+  onlyUpdateOnMove: 0
+  showDebugInfo: 0
 --- !u!1 &7579547961988164678
 GameObject:
   m_ObjectHideFlags: 0

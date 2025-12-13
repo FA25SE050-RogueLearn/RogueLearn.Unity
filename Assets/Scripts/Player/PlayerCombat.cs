@@ -94,6 +94,9 @@ namespace BossFight2D.Player
                 EventBus.AnswerModeExited += OnAnswerModeExited;
                 EventBus.PowerPlayStarted += OnPowerPlayStarted;
                 EventBus.PowerPlayEnded += OnPowerPlayEnded;
+
+                // Initialize HUD with starting charges
+                EventBus.RaiseChargesChanged(attackCharges.Value, maxAttackCharges);
             }
             // Server-side: enforce consistent combat config to avoid prefab mismatch across host vs client
             if (IsServer)
@@ -304,6 +307,9 @@ namespace BossFight2D.Player
         private void OnAttackChargesChanged(int previousValue, int newValue)
         {
             UpdateChargesUI();
+
+            // Update HUD via EventBus
+            EventBus.RaiseChargesChanged(newValue, maxAttackCharges);
         }
 
         public void AwardCharges()

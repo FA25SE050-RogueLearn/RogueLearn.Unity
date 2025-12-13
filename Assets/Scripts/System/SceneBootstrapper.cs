@@ -232,7 +232,7 @@ public class SceneBootstrapper : MonoBehaviour
         }
 
         // Ensure BossHealth slider exists in the UI (auto-create if missing)
-        EnsureBossHealthUIExists();
+        //EnsureBossHealthUIExists();
     }
 
     private GameObject EnsurePlayer()

@@ -25,6 +25,13 @@ namespace BossFight2D.Boss
       if (combat == null) combat = GetComponent<BossCombat>();
       bossHealth = GetComponent<BossHealth>();
     }
+
+    void Start()
+    {
+      // Notify HUD that boss has spawned
+      EventBus.RaiseBossSpawned(bossName, null);
+    }
+
     void OnEnable() { EventBus.PerfectDodgeSuccess += OnPerfectDodgeSuccess; EventBus.GamePaused += OnGamePaused; EventBus.GameResumed += OnGameResumed; EventBus.GameWon += OnGameWon; }
     void OnDisable() { EventBus.PerfectDodgeSuccess -= OnPerfectDodgeSuccess; EventBus.GamePaused -= OnGamePaused; EventBus.GameResumed -= OnGameResumed; EventBus.GameWon -= OnGameWon; }
 
@@ -48,7 +55,12 @@ namespace BossFight2D.Boss
       }
     }
 
-    void EnterPhase2() { phase = BossPhase.Phase2; }
+    void EnterPhase2()
+    {
+      phase = BossPhase.Phase2;
+      // Notify HUD of phase change
+      EventBus.RaiseBossPhaseChanged(2, 2);
+    }
 
     public void OnWrongAnswer()
     {

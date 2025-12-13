@@ -48,7 +48,7 @@ namespace BossFight2D.Network
             else if (IsHost)
             {
                 // Host: Register own userId immediately from environment variable
-                string hostUserId = Environment.GetEnvironmentVariable("USER_ID");
+                string hostUserId = System.Environment.GetEnvironmentVariable("USER_ID");
                 if (!string.IsNullOrEmpty(hostUserId))
                 {
                     ulong hostClientId = NetworkManager.LocalClientId;
@@ -133,7 +133,7 @@ namespace BossFight2D.Network
             // Fallback to environment variable if this is the host
             if (clientId == 0 || (NetworkManager.Singleton != null && clientId == NetworkManager.Singleton.LocalClientId))
             {
-                string hostUserId = Environment.GetEnvironmentVariable("USER_ID");
+                string hostUserId = System.Environment.GetEnvironmentVariable("USER_ID");
                 if (!string.IsNullOrEmpty(hostUserId))
                 {
                     Debug.Log($"[PlayerIdentity] Using fallback USER_ID env var '{hostUserId}' for clientId {clientId}");

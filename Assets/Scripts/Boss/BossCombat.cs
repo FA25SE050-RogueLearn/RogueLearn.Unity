@@ -121,6 +121,7 @@ namespace BossFight2D.Boss
         bool _isPunishAttack;
         bool _inPowerPlay;
         GameManager gm;
+        bool _gameEnded;
 
         int _queuedDamage = 1;
 
@@ -161,6 +162,7 @@ namespace BossFight2D.Boss
 
         void OnEnable()
         {
+            _gameEnded = false;
             _questionActive = true;
             if (!patrolDuringQuestion) { _patrolling = false; return; }
             if (onlyPatrolWhenWithinRange && playerTransform != null)
@@ -177,6 +179,8 @@ namespace BossFight2D.Boss
             EventBus.QuestionTimeout += OnQuestionTimeout;
             EventBus.PowerPlayStarted += OnPowerPlayStarted;
             EventBus.PowerPlayEnded += OnPowerPlayEnded;
+            EventBus.GameLost += OnGameEnded;
+            EventBus.GameWon += OnGameEnded;
         }
 
         void OnDisable()
@@ -186,6 +190,8 @@ namespace BossFight2D.Boss
             EventBus.QuestionTimeout -= OnQuestionTimeout;
             EventBus.PowerPlayStarted -= OnPowerPlayStarted;
             EventBus.PowerPlayEnded -= OnPowerPlayEnded;
+            EventBus.GameLost -= OnGameEnded;
+            EventBus.GameWon -= OnGameEnded;
         }
         void OnAnswerSubmitted(int choice, bool correct)
         {
@@ -211,9 +217,22 @@ namespace BossFight2D.Boss
         {
             _inPowerPlay = false;
         }
+        void OnGameEnded()
+        {
+            _gameEnded = true;
+            CancelInvoke();
+            HideTelegraph();
+            if (hitbox != null)
+            {
+                hitbox.Deactivate();
+                hitbox.transform.localRotation = _hitboxDefaultLocalRotation;
+                hitbox.transform.localPosition = _hitboxDefaultLocalPosition;
+            }
+        }
 
         public void QueueAttack(int damage, GameObject target = null)
         {
+            if (_gameEnded) return;
             if (Time.time < _nextAttackAllowed) return;
             // MVP: Allow attacks during questions if player is outside safe zone
             // Suppress attacks only if player is actually INSIDE the station during question phase
@@ -515,6 +534,7 @@ namespace BossFight2D.Boss
                 playerTransform = SelectBestPlayerTransform();
                 _nextPlayerFindTime = Time.time + playerFindInterval;
             }
+            if (_gameEnded) return;
             if (facePlayer && playerTransform != null && sr != null)
             {
                 bool faceRight = playerTransform.position.x >= transform.position.x;
@@ -525,6 +545,7 @@ namespace BossFight2D.Boss
 
         void FixedUpdate()
         {
+            if (_gameEnded) return;
             // Make boss movement server-authoritative when Netcode is present.
             // In offline mode (no NetworkManager), this falls back to local movement.
             if (NetworkManager.Singleton != null && !IsServer)

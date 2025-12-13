@@ -143,6 +143,8 @@ namespace BossFight2D.UI
             EventBus.AdvancePromptHidden += OnAdvanceHidden;
             EventBus.PowerPlayStarted += OnPowerPlayStarted;
             EventBus.PowerPlayEnded += OnPowerPlayEnded;
+            EventBus.GameWon += OnGameEnded;
+            EventBus.GameLost += OnGameEnded;
 
             // Validate bindings and warn if anything is missing
             ValidateReferences();
@@ -158,6 +160,8 @@ namespace BossFight2D.UI
             EventBus.AdvancePromptHidden -= OnAdvanceHidden;
             EventBus.PowerPlayStarted -= OnPowerPlayStarted;
             EventBus.PowerPlayEnded -= OnPowerPlayEnded;
+            EventBus.GameWon -= OnGameEnded;
+            EventBus.GameLost -= OnGameEnded;
         }
 
         void Update()
@@ -231,6 +235,9 @@ namespace BossFight2D.UI
         {
             isActive = false;
             SetButtonsInteractable(false);
+
+            // Notify HUD of question answer
+            EventBus.RaiseQuestionAnswered(isCorrect);
 
             // Flash the selected button to indicate correctness
             if (selectedIndex >= 0)
@@ -415,6 +422,11 @@ namespace BossFight2D.UI
             ImmediateHidePanel();
         }
         void OnPowerPlayEnded() { showPowerPlayBanner = false; if (debugPanelState) Debug.Log("[QPC] Power Play END."); }
+        void OnGameEnded()
+        {
+            // Immediately hide the panel on win/lose
+            ImmediateHidePanel();
+        }
 
         void OnGUI()
         {
@@ -479,6 +491,11 @@ namespace BossFight2D.UI
             }
         }
 
+        /// <summary>
+        /// Set up a button to suppress PointerDown events when pressed.
+        /// This is useful for buttons that trigger answer interactions.
+        /// Avoid trigger attack of the character while answering.
+        /// </summary>
         private void SetupPointerDownSuppressor(Button btn)
         {
             if (btn == null) return;

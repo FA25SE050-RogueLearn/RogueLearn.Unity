@@ -2,6 +2,7 @@ using UnityEngine;
 using System;
 using Unity.Netcode;
 using BossFight2D.Network;
+using BossFight2D.Systems;
 
 namespace BossFight2D.Player {
   public class PlayerHealth : NetworkBehaviour, BossFight2D.Combat.IDamageable {
@@ -17,6 +18,16 @@ namespace BossFight2D.Player {
         {
             hearts.Value = maxHearts.Value;
         }
+
+        // Subscribe to health changes to update HUD
+        hearts.OnValueChanged += (oldValue, newValue) =>
+        {
+            // Update HUD via EventBus
+            EventBus.RaisePlayerHealthChanged(newValue, maxHearts.Value);
+        };
+
+        // Initialize HUD with starting health
+        EventBus.RaisePlayerHealthChanged(hearts.Value, maxHearts.Value);
     }
 
     public void TakeDamage(int amount)

@@ -12,7 +12,6 @@ namespace BossFight2D.UI
         [SerializeField] private Slider focusSlider;
         [SerializeField] private BossFight2D.Player.PlayerHealth playerHealth;
         [SerializeField] private BossFight2D.Player.PlayerFocus playerFocus;
-
         private void Awake()
         {
             SceneManager.sceneLoaded += OnSceneLoaded;

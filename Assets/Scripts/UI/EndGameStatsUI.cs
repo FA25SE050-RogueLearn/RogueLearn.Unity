@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.UI;
 using Unity.Netcode;
@@ -152,21 +153,55 @@ namespace BossFight2D.UI
             OpenStatsPage();
         }
 
+        private string ResolveFrontendBaseUrl()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!string.IsNullOrWhiteSpace(Application.absoluteURL))
+            {
+                try
+                {
+                    var uri = new Uri(Application.absoluteURL);
+                    var host = $"{uri.Scheme}://{uri.Host}";
+                    if (!uri.IsDefaultPort)
+                    {
+                        host += $":{uri.Port}";
+                    }
+                    return host.TrimEnd('/');
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[EndGameStatsUI] Failed to parse absolute URL '{Application.absoluteURL}': {ex.Message}");
+                }
+            }
+#endif
+            var envKeys = new[] { "FRONTEND_URL", "FRONTEND_BASE_URL", "NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_FRONTEND_URL", "NEXT_PUBLIC_BASE_URL" };
+            foreach (var key in envKeys)
+            {
+                var value = System.Environment.GetEnvironmentVariable(key);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value.Trim().TrimEnd('/');
+                }
+            }
+
+            return "http://localhost:3000";
+        }
+
         private void OpenStatsPage()
         {
             // MVP: Redirect to frontend stats page (Next.js on port 3000)
             // Get the frontend URL from environment or config
-            string frontendUrl = System.Environment.GetEnvironmentVariable("FRONTEND_URL") ?? "http://localhost:3000";
+            string frontendUrl = ResolveFrontendBaseUrl();
             string statsUrl = $"{frontendUrl}/stats";
 
             // For WebGL builds, open in same tab
-            #if UNITY_WEBGL && !UNITY_EDITOR
+#if UNITY_WEBGL && !UNITY_EDITOR
             Application.ExternalEval($"window.location.href='{statsUrl}'");
-            #else
+#else
             // For standalone builds, open in browser
             Application.OpenURL(statsUrl);
             Debug.Log($"[EndGameStatsUI] Opening stats page: {statsUrl}");
-            #endif
+#endif
         }
 
         public void Hide()

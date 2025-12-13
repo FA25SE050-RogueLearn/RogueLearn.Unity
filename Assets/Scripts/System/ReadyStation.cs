@@ -358,7 +358,7 @@ namespace BossFight2D.Systems
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void EjectPlayerServerRpc(ServerRpcParams rpcParams = default)
+        public void EjectPlayerServerRpc(ServerRpcParams rpcParams = default)
         {
             DoEjectServer(rpcParams.Receive.SenderClientId);
         }

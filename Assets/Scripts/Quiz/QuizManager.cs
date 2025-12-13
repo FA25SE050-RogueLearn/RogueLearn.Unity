@@ -26,7 +26,6 @@ namespace BossFight2D.Quiz
         [SerializeField] private string questionPackFileName;
         private List<QuestionData> questions;
 
-
         public NetworkVariable<QuizState> State = new NetworkVariable<QuizState>(QuizState.Idle);
         public NetworkVariable<float> RemainingTime = new NetworkVariable<float>(0f);
         public NetworkVariable<float> CurrentQuestionTimeLimit = new NetworkVariable<float>(10f);
@@ -39,28 +38,6 @@ namespace BossFight2D.Quiz
         // Dedicated/headless server runs as Host to bind Relay, but the server is not a playable client.
         // In that mode, exclude the server/host from player counts and readiness requirements.
         private bool ExcludeServerFromPlayerCounts => Application.isBatchMode && NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost;
-
-        private int GetTotalPlayableClients()
-        {
-            var nm = NetworkManager.Singleton;
-            if (nm == null || nm.ConnectedClientsIds == null) return 0;
-            if (ExcludeServerFromPlayerCounts)
-            {
-                return nm.ConnectedClientsIds.Count(id => id != NetworkManager.ServerClientId);
-            }
-            return nm.ConnectedClientsIds.Count;
-        }
-
-        private int GetReadyPlayableClients()
-        {
-            var nm = NetworkManager.Singleton;
-            if (nm == null) return 0;
-            if (ExcludeServerFromPlayerCounts)
-            {
-                return playerReadyStatus.Where(kv => kv.Key != NetworkManager.ServerClientId && kv.Value).Count();
-            }
-            return playerReadyStatus.Values.Count(v => v);
-        }
 
         private Dictionary<ulong, bool> playerReadyStatus = new Dictionary<ulong, bool>();
         private Dictionary<ulong, int> playerAnswers = new Dictionary<ulong, int>();
@@ -94,6 +71,29 @@ namespace BossFight2D.Quiz
         private HashSet<ulong> ejectedPlayers = new HashSet<ulong>();
 
         public enum DecisionRule { AnyAttack, MajorityAttack }
+
+
+        private int GetTotalPlayableClients()
+        {
+            var nm = NetworkManager.Singleton;
+            if (nm == null || nm.ConnectedClientsIds == null) return 0;
+            if (ExcludeServerFromPlayerCounts)
+            {
+                return nm.ConnectedClientsIds.Count(id => id != NetworkManager.ServerClientId);
+            }
+            return nm.ConnectedClientsIds.Count;
+        }
+
+        private int GetReadyPlayableClients()
+        {
+            var nm = NetworkManager.Singleton;
+            if (nm == null) return 0;
+            if (ExcludeServerFromPlayerCounts)
+            {
+                return playerReadyStatus.Where(kv => kv.Key != NetworkManager.ServerClientId && kv.Value).Count();
+            }
+            return playerReadyStatus.Values.Count(v => v);
+        }
 
         private void Awake()
         {
@@ -139,6 +139,9 @@ namespace BossFight2D.Quiz
             EventBus.GameLost += OnGameEnded;
         }
 
+        /// <summary>
+        /// Load questions from the specified JSON file in StreamingAssets.
+        /// </summary>
         private void LoadQuestions()
         {
             if (string.IsNullOrEmpty(questionPackFileName))
@@ -388,6 +391,14 @@ namespace BossFight2D.Quiz
             if (!IsServer) return;
             ejectedPlayers.Add(clientId);
             Debug.Log($"[QuizManager] Player {clientId} marked as ejected - must re-ready to rejoin");
+            var readyStation = FindObjectOfType<ReadyStation>();
+            if (readyStation == null)
+            {
+                Debug.LogError("[QuizManager] ReadyStation not found in scene.");
+                return;
+            }
+            // Eject the player from the ready station
+            readyStation.EjectPlayerServerRpc();
         }
 
         private void CheckAllPlayersReady()
@@ -606,8 +617,7 @@ namespace BossFight2D.Quiz
                     {
                         if (station.IsPlayerInside(client.ClientId))
                         {
-                            // Player is inside safe zone with wrong answer - eject them
-                            station.EjectPlayer(client.ClientId);
+                            // Player is inside safe zone with wrong answer - mark ejected (actual eject handled elsewhere)
                             MarkPlayerEjected(client.ClientId);
                             Debug.Log($"[QuizManager] Ejecting player {client.ClientId} after resolution (answered wrong while in safe zone)");
                             break; // Player can only be in one station

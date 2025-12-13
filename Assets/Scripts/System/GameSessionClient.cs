@@ -45,6 +45,25 @@ namespace BossFight2D.Systems
         private string lastCompletionResult = string.Empty;
         private string lastCompletionTimestamp = string.Empty;
 
+        public string SessionId => sessionId;
+        public string LastJoinCode => lastJoinCode;
+
+        private string ResolveUserApiBaseUrl()
+        {
+            if (!string.IsNullOrWhiteSpace(userApiBaseUrl))
+            {
+                return userApiBaseUrl.Trim().TrimEnd('/');
+            }
+
+            var envBase = System.Environment.GetEnvironmentVariable("USER_API_BASE");
+            if (string.IsNullOrWhiteSpace(envBase))
+            {
+                envBase = System.Environment.GetEnvironmentVariable("NEXT_PUBLIC_USER_API_URL");
+            }
+
+            return string.IsNullOrWhiteSpace(envBase) ? string.Empty : envBase.Trim().TrimEnd('/');
+        }
+
         private void Awake()
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); }
@@ -53,13 +72,13 @@ namespace BossFight2D.Systems
             // Default base from environment for desktop/headless; WebGL will prefer relative
             try
             {
-                var envBase = Environment.GetEnvironmentVariable("USER_API_BASE");
-                if (!string.IsNullOrWhiteSpace(envBase))
+                var resolvedBase = ResolveUserApiBaseUrl();
+                if (!string.IsNullOrWhiteSpace(resolvedBase))
                 {
-                    userApiBaseUrl = envBase.TrimEnd('/');
+                    userApiBaseUrl = resolvedBase;
                     Debug.Log($"[GameSessionClient] User API base from env: {userApiBaseUrl}");
                 }
-                var insecure = Environment.GetEnvironmentVariable("INSECURE_TLS");
+                var insecure = System.Environment.GetEnvironmentVariable("INSECURE_TLS");
                 insecureTls = string.Equals(insecure, "1", StringComparison.OrdinalIgnoreCase);
             }
             catch { }
@@ -71,7 +90,7 @@ namespace BossFight2D.Systems
             EventBus.QuestionStarted += OnQuestionStarted;
             // Listen for scene transitions so we can inject the pack when Gameplay loads
             SceneManager.sceneLoaded += OnSceneLoaded;
-            var m = Environment.GetEnvironmentVariable("APP_MODE");
+            var m = System.Environment.GetEnvironmentVariable("APP_MODE");
             if (!string.IsNullOrWhiteSpace(m)) appMode = m.Trim().ToLowerInvariant();
         }
 
@@ -228,7 +247,7 @@ namespace BossFight2D.Systems
                 yield break;
             }
 
-            var baseUrl = string.IsNullOrWhiteSpace(userApiBaseUrl) ? string.Empty : userApiBaseUrl;
+            var baseUrl = ResolveUserApiBaseUrl();
             var resolveUrl = string.IsNullOrEmpty(baseUrl)
                 ? $"/api/quests/game/sessions/resolve?code={UnityWebRequest.EscapeURL(code)}"
                 : $"{baseUrl}/api/quests/game/sessions/resolve?code={UnityWebRequest.EscapeURL(code)}";
@@ -269,12 +288,12 @@ namespace BossFight2D.Systems
             bool isAbsolute = packUrl.StartsWith("http://") || packUrl.StartsWith("https://");
             if (!isAbsolute)
             {
-                if (string.IsNullOrWhiteSpace(userApiBaseUrl))
+                if (string.IsNullOrWhiteSpace(baseUrl))
                 {
                     Debug.LogError("[GameSessionClient] pack_url is relative but USER_API_BASE/userApiBaseUrl is empty. Set USER_API_BASE on the server or configure GameSessionClient.userApiBaseUrl.");
                     yield break;
                 }
-                fullPackUrl = userApiBaseUrl + (packUrl.StartsWith("/") ? packUrl : ("/" + packUrl));
+                fullPackUrl = baseUrl + (packUrl.StartsWith("/") ? packUrl : ("/" + packUrl));
             }
 
             Debug.Log($"[GameSessionClient] Fetching pack: {fullPackUrl}");
@@ -323,7 +342,7 @@ namespace BossFight2D.Systems
                     req.SetRequestHeader("X-Rogue-Sender", "server");
                     try
                     {
-                        var token = Environment.GetEnvironmentVariable("RESULTS_HTTP_TOKEN");
+                        var token = System.Environment.GetEnvironmentVariable("RESULTS_HTTP_TOKEN");
                         if (!string.IsNullOrWhiteSpace(token)) req.SetRequestHeader("Authorization", "Bearer " + token);
                     }
                     catch { }
@@ -353,16 +372,7 @@ namespace BossFight2D.Systems
             if (completionSent == false) completionSent = true;
             if (string.IsNullOrWhiteSpace(sessionId)) yield break;
             yield return new WaitForSeconds(0.25f);
-            var baseUrl = userApiBaseUrl;
-            if (string.IsNullOrWhiteSpace(baseUrl))
-            {
-                try
-                {
-                    var envBase = Environment.GetEnvironmentVariable("USER_API_BASE");
-                    if (!string.IsNullOrWhiteSpace(envBase)) baseUrl = envBase.TrimEnd('/');
-                }
-                catch { }
-            }
+            var baseUrl = ResolveUserApiBaseUrl();
             if (string.IsNullOrWhiteSpace(baseUrl))
             {
                 Debug.LogError("[GameSessionClient] USER_API_BASE/userApiBaseUrl is not set; cannot POST completion.");
@@ -428,7 +438,7 @@ namespace BossFight2D.Systems
 
                     try
                     {
-                        var token = Environment.GetEnvironmentVariable("RESULTS_HTTP_TOKEN");
+                        var token = System.Environment.GetEnvironmentVariable("RESULTS_HTTP_TOKEN");
                         if (!string.IsNullOrWhiteSpace(token)) req.SetRequestHeader("Authorization", "Bearer " + token);
                     }
                     catch { }
@@ -459,16 +469,7 @@ namespace BossFight2D.Systems
         {
             if (string.IsNullOrWhiteSpace(sessionId)) yield break;
             if (eventLog == null || eventLog.Count == 0) yield break;
-            var baseUrl = userApiBaseUrl;
-            if (string.IsNullOrWhiteSpace(baseUrl))
-            {
-                try
-                {
-                    var envBase = Environment.GetEnvironmentVariable("USER_API_BASE");
-                    if (!string.IsNullOrWhiteSpace(envBase)) baseUrl = envBase.TrimEnd('/');
-                }
-                catch { }
-            }
+            var baseUrl = ResolveUserApiBaseUrl();
             if (string.IsNullOrWhiteSpace(baseUrl)) yield break;
             var url = baseUrl + $"/api/quests/game/sessions/{sessionId}/events";
             var payload = new EventsPayload { events = new List<EventRecord>(eventLog) };
@@ -629,7 +630,7 @@ namespace BossFight2D.Systems
         public IEnumerator FetchResultFromBackend(Action<string, string, SummaryData> onDone)
         {
             if (string.IsNullOrWhiteSpace(sessionId)) { onDone?.Invoke(string.Empty, string.Empty, new SummaryData { topics = new List<TopicSummaryData>() }); yield break; }
-            var baseUrl = string.IsNullOrWhiteSpace(userApiBaseUrl) ? string.Empty : userApiBaseUrl;
+            var baseUrl = ResolveUserApiBaseUrl();
             var url = string.IsNullOrEmpty(baseUrl)
                 ? $"/api/quests/game/sessions/{sessionId}/result"
                 : $"{baseUrl}/api/quests/game/sessions/{sessionId}/result";

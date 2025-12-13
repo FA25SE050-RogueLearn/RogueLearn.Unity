@@ -2,6 +2,7 @@ using Unity.Netcode;
 using UnityEngine;
 using BossFight2D.Boss;
 using BossFight2D.Network;
+using BossFight2D.Systems;
 
 public class BossHealth : NetworkBehaviour
 {
@@ -23,7 +24,13 @@ public class BossHealth : NetworkBehaviour
         currentHealth.OnValueChanged += (oldValue, newValue) =>
         {
             OnHealthChanged?.Invoke(newValue, maxHealth);
+
+            // Update HUD via EventBus
+            EventBus.RaiseBossHealthChanged(newValue, maxHealth);
         };
+
+        // Initialize HUD with full health
+        EventBus.RaiseBossHealthChanged(currentHealth.Value, maxHealth);
     }
 
     public void TakeDamage(int damage)
