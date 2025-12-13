@@ -12,7 +12,6 @@ namespace BossFight2D.UI
         [SerializeField] private Slider focusSlider;
         [SerializeField] private BossFight2D.Player.PlayerHealth playerHealth;
         [SerializeField] private BossFight2D.Player.PlayerFocus playerFocus;
-
         private void Awake()
         {
             SceneManager.sceneLoaded += OnSceneLoaded;
@@ -62,7 +61,9 @@ namespace BossFight2D.UI
         {
             if (playerHealth != null && healthSlider != null)
             {
-                float h = playerHealth.maxHearts > 0 ? (float)playerHealth.hearts / playerHealth.maxHearts : 0f;
+                int maxHearts = playerHealth.maxHearts.Value;
+                int curHearts = playerHealth.hearts.Value;
+                float h = maxHearts > 0 ? (float)curHearts / maxHearts : 0f;
                 if (force || !Mathf.Approximately(healthSlider.value, h))
                 {
                     healthSlider.SetValueWithoutNotify(h);

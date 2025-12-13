@@ -1,0 +1,66 @@
+name: Unity Headless CI to Artifact Registry
+
+on:
+  push:
+    branches: [ multiplayer ]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ runner.os }}-Unity-2022.3.55f1-${{ github.ref }}-${{ hashFiles('**/*.meta') }}
+          restore-keys: |
+            Library-${{ runner.os }}-Unity-2022.3.55f1-
+
+      - name: Unity - Build Linux (Standalone)
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          unityVersion: 2022.3.55f1
+          targetPlatform: StandaloneLinux64
+          projectPath: .
+          buildName: BossFight2D
+          buildPath: build
+
+      - name: List build outputs (debug)
+        run: |
+          echo "Showing build directory contents:" 
+          ls -la build || true
+          echo "Showing StandaloneLinux64 contents:" 
+          ls -la build/StandaloneLinux64 || true
+          echo "Top-level files under build (maxdepth=2):"
+          find build -maxdepth 2 -type f | head -n 50 || true
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev -q
+
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/HeadlessServer.Dockerfile
+          push: true
+          tags: |
+            asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO }}/server:latest
+            asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO }}/server:${{ github.sha }}

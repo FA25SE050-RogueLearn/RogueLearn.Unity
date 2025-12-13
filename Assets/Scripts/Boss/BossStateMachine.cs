@@ -1,21 +1,37 @@
 using UnityEngine;
 using BossFight2D.Systems;
 using BossFight2D.Core;
+using Unity.Netcode.Components;
+
 namespace BossFight2D.Boss
 {
   public enum BossPhase { Phase1, Transition, Phase2, Dead }
   public class BossStateMachine : MonoBehaviour, BossFight2D.Combat.IDamageable
   {
-    public string bossName = "The Professor"; public int maxHP = 100; public int hp = 100; public BossPhase phase = BossPhase.Phase1;
+    public string bossName = "The Professor";
+    public BossPhase phase = BossPhase.Phase1;
     public BossCombat combat;
+    private BossHealth bossHealth;
+
     [Header("Wrong Answer Telegraph")]
-    public float wrongTelegraph = 0.6f; // delay before perfect window
-    public float perfectWindow = 0.2f;   // window length
+    public float wrongTelegraph = 0.9f;
+    public float perfectWindow = 0.35f;
 
     public Animator animator;
     bool perfectSuccess;
 
-    void Awake() { if (combat == null) combat = GetComponent<BossCombat>(); }
+    void Awake()
+    {
+      if (combat == null) combat = GetComponent<BossCombat>();
+      bossHealth = GetComponent<BossHealth>();
+    }
+
+    void Start()
+    {
+      // Notify HUD that boss has spawned
+      EventBus.RaiseBossSpawned(bossName, null);
+    }
+
     void OnEnable() { EventBus.PerfectDodgeSuccess += OnPerfectDodgeSuccess; EventBus.GamePaused += OnGamePaused; EventBus.GameResumed += OnGameResumed; EventBus.GameWon += OnGameWon; }
     void OnDisable() { EventBus.PerfectDodgeSuccess -= OnPerfectDodgeSuccess; EventBus.GamePaused -= OnGamePaused; EventBus.GameResumed -= OnGameResumed; EventBus.GameWon -= OnGameWon; }
 
@@ -23,24 +39,28 @@ namespace BossFight2D.Boss
 
     public void ApplyDamage(int dmg)
     {
-      if (phase == BossPhase.Dead)
-      {
-        return;
-      }
-      hp = Mathf.Max(0, hp - dmg);
-      if (hp <= 0)
+      if (phase == BossPhase.Dead) return;
+
+      bossHealth.TakeDamage(dmg);
+
+      if (bossHealth.currentHealth.Value <= 0)
       {
         phase = BossPhase.Dead;
         BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>()?.WinGame();
       }
-      else if (hp <= maxHP / 2 && phase == BossPhase.Phase1)
+      else if (bossHealth.currentHealth.Value <= 500 && phase == BossPhase.Phase1)
       {
-        phase = BossPhase.Transition; Invoke(nameof(EnterPhase2), 1.0f);
+        phase = BossPhase.Transition;
+        Invoke(nameof(EnterPhase2), 1.0f);
       }
-
-
     }
-    void EnterPhase2() { phase = BossPhase.Phase2; }
+
+    void EnterPhase2()
+    {
+      phase = BossPhase.Phase2;
+      // Notify HUD of phase change
+      EventBus.RaiseBossPhaseChanged(2, 2);
+    }
 
     public void OnWrongAnswer()
     {
@@ -105,7 +125,15 @@ namespace BossFight2D.Boss
 
     void OnGameWon()
     {
-      if (animator != null) animator.SetTrigger("Death");
+      var na = GetComponent<NetworkAnimator>();
+      if (Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsServer && na != null)
+      {
+        na.SetTrigger("Death");
+      }
+      else if (animator != null)
+      {
+        animator.SetTrigger("Death");
+      }
 
       // Ensure boss combat/Hitbox are disabled after victory to prevent stray interactions
       if (combat != null)

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.EventSystems;
@@ -125,7 +125,7 @@ namespace BossFight2D.UI
         btnTextGO.transform.SetParent(btnGO.transform, false);
         var t = btnTextGO.GetComponent<Text>(); t.text = startButtonText; t.color = Color.white; t.alignment = TextAnchor.MiddleCenter; t.fontSize = 28; if (uiFont != null) t.font = uiFont;
         var tr = btnTextGO.GetComponent<RectTransform>(); tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = Vector2.zero; tr.offsetMax = Vector2.zero;
-        
+
       }
     }
 
@@ -135,8 +135,6 @@ namespace BossFight2D.UI
       if (es == null)
       {
         var go = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
-        var sim = go.GetComponent<StandaloneInputModule>();
-        sim.forceModuleActive = true;
       }
     }
 

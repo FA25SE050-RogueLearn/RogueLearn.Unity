@@ -19,8 +19,7 @@ namespace BossFight2D.UI
                 if (go != null) bossHealthSlider = go.GetComponent<Slider>();
             }
 
-            // Initialize once
-            UpdateBar(force: true);
+
         }
 
         private void Start()
@@ -33,23 +32,38 @@ namespace BossFight2D.UI
                 bossHealthSlider.minValue = 0f;
                 bossHealthSlider.maxValue = 1f;
             }
-        }
 
-        private void Update()
-        {
-            // Polling keeps UI in sync without requiring gameplay events
-            UpdateBar(force: false);
-        }
-
-        private void UpdateBar(bool force)
-        {
-            if (boss != null && bossHealthSlider != null)
+            if (boss != null)
             {
-                float h = boss.maxHP > 0 ? (float)boss.hp / boss.maxHP : 0f;
-                if (force || !Mathf.Approximately(bossHealthSlider.value, h))
+                BossHealth health = boss.GetComponent<BossHealth>();
+                if (health != null)
                 {
-                    bossHealthSlider.SetValueWithoutNotify(h);
+                    health.OnHealthChanged += UpdateHealthBar;
+                    // Initial update
+                    UpdateHealthBar(health.currentHealth.Value, health.GetMaxHealth());
                 }
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (boss != null)
+            {
+                BossHealth health = boss.GetComponent<BossHealth>();
+                if (health != null)
+                {
+                    health.OnHealthChanged -= UpdateHealthBar;
+                }
+            }
+        }
+
+        private void UpdateHealthBar(int currentHealth, int maxHealth)
+        {
+            if (bossHealthSlider != null)
+            {
+                float healthPercentage = maxHealth > 0 ? (float)currentHealth / maxHealth : 0f;
+                Debug.Log($"Updating health bar: {healthPercentage}");
+                bossHealthSlider.SetValueWithoutNotify(healthPercentage);
             }
         }
     }

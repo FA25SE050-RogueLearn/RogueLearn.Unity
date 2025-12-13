@@ -1,165 +1,373 @@
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using Unity.Netcode;
+using BossFight2D.Core;
+using BossFight2D.Combat;
+using BossFight2D.Quiz;
 using BossFight2D.Systems;
+using UnityEngine.EventSystems;
+using TMPro;
 
 namespace BossFight2D.Player
 {
-    public class PlayerCombat : MonoBehaviour
+    public class PlayerCombat : NetworkBehaviour
     {
+
+        public Hitbox2D hitbox;
         public Animator animator;
-        public BossFight2D.Combat.Hitbox2D hitbox;
         public int defaultDamage = 10;
         public float attackCooldown = 0.5f;
-        public float hitboxWindow = 0.2f;
-        public bool inputEnabled = true;
+
+        [Header("Hitbox Alignment")]
+        [Tooltip("If true, the player's hitbox will align to the current facing (flipX) so it stays in front of the player.")]
+        [SerializeField] private bool alignHitboxToFacing = true;
+        [Tooltip("Horizontal offset for the hitbox relative to the player. Positive value for facing right; automatically mirrored when facing left.")]
+        [SerializeField] private float hitboxForwardOffset = 0.6f;
+        [Tooltip("Vertical offset for the hitbox relative to the player.")]
+        [SerializeField] private float hitboxUpOffset = 0f;
 
         [Header("Attack Charges (Stamina)")]
-        [Tooltip("Current number of attack charges the player has.")]
-        public int attackCharges = 0;
+        public NetworkVariable<int> attackCharges = new NetworkVariable<int>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
         [Tooltip("Maximum attack charges the player can hold.")]
         public int maxAttackCharges = 3;
+
         [Tooltip("Charges gained when answering a question correctly.")]
         public int chargesPerCorrect = 1;
+
         [Tooltip("Charges consumed per attack (applies even during Power Play).")]
         public int chargeCostPerAttack = 1;
+
         [Tooltip("Optional placeholder for a UI element (e.g., Text/Slider/Image) to reflect charges in the Inspector.")]
         public GameObject chargesUIPlaceholder;
 
-        float _nextAttackAllowed;
-        int _queuedDamage;
-        float _inputSuppressUntil;
-        bool _inAnswerMode;
+        private float _nextAttackAllowed;
+        private SpriteRenderer _spriteRenderer;
+        private Vector3 _hitboxDefaultLocalPosition;
+        private Quaternion _hitboxDefaultLocalRotation;
 
-        void Awake() { if (animator == null) animator = GetComponent<Animator>(); if (hitbox == null) hitbox = GetComponentInChildren<BossFight2D.Combat.Hitbox2D>(); }
+        [Header("Phase & UI Gating")]
+        [Tooltip("Disables player attacks while a question is being answered via UI.")]
+        [SerializeField] private bool blockAttacksDuringQuestion = true;
+        [Tooltip("Cooldown after submitting an answer before attacks are re-enabled.")]
+        [SerializeField] private float postAnswerAttackLockSeconds = 1.25f;
+        private bool _questionActive;
+        private bool _answerInteractionActive; // local flag set the moment the answer button is pressed
+        private bool _powerPlayActive;
+        private float _attacksReenabledAtTime;
 
-        void OnEnable() { EventBus.AnswerSubmitted += OnAnswerSubmitted; EventBus.QuestionStarted += OnQuestionStarted; EventBus.AnswerModeExited += OnAnswerModeExited; EventBus.PowerPlayStarted += OnPowerPlayStarted; }
-        void OnDisable() { EventBus.AnswerSubmitted -= OnAnswerSubmitted; EventBus.QuestionStarted -= OnQuestionStarted; EventBus.AnswerModeExited -= OnAnswerModeExited; EventBus.PowerPlayStarted -= OnPowerPlayStarted; }
+        void Awake()
+        {
+            if (animator == null) animator = GetComponent<Animator>();
+            if (hitbox == null) hitbox = GetComponentInChildren<Hitbox2D>();
+            _spriteRenderer = GetComponent<SpriteRenderer>();
+            if (_spriteRenderer == null) _spriteRenderer = GetComponentInChildren<SpriteRenderer>();
+
+            if (hitbox != null)
+            {
+                _hitboxDefaultLocalPosition = hitbox.transform.localPosition;
+                _hitboxDefaultLocalRotation = hitbox.transform.localRotation;
+                // Use current hitbox local position as the default offsets so alignment respects prefab setup
+                hitboxForwardOffset = Mathf.Abs(_hitboxDefaultLocalPosition.x);
+                hitboxUpOffset = _hitboxDefaultLocalPosition.y;
+            }
+            if (chargesUIPlaceholder == null)
+            {
+                //find  object in the hierarchy with the name "AttackCharge"
+                chargesUIPlaceholder = GameObject.Find("AttackCharge");
+                if (chargesUIPlaceholder == null)
+                {
+                    Debug.LogError("PlayerCombat: Could not find ChargesUI placeholder. Please add a child object with the name 'ChargesUI' to the player prefab.");
+                }
+            }
+        }
+
+        public override void OnNetworkSpawn()
+        {
+            if (IsOwner)
+            {
+                attackCharges.OnValueChanged += OnAttackChargesChanged;
+                // Subscribe to global phase events to gate combat appropriately
+                EventBus.QuestionStarted += OnQuestionStarted;
+                EventBus.AnswerSubmitted += OnAnswerSubmitted;
+                EventBus.QuestionTimeout += OnQuestionTimeout;
+                EventBus.AnswerModeExited += OnAnswerModeExited;
+                EventBus.PowerPlayStarted += OnPowerPlayStarted;
+                EventBus.PowerPlayEnded += OnPowerPlayEnded;
+
+                // Initialize HUD with starting charges
+                EventBus.RaiseChargesChanged(attackCharges.Value, maxAttackCharges);
+            }
+            // Server-side: enforce consistent combat config to avoid prefab mismatch across host vs client
+            if (IsServer)
+            {
+                // Temporary safeguard: unify cost and max across all spawned players
+                // to prevent unexpected 3-per-attack consumption on remote clients.
+                if (chargeCostPerAttack != 1 || maxAttackCharges != 3)
+                {
+                    Debug.LogWarning($"[PlayerCombat][Server] Overriding combat config for client {OwnerClientId}: cost {chargeCostPerAttack} -> 1, max {maxAttackCharges} -> 3");
+                }
+                chargeCostPerAttack = 1;
+                maxAttackCharges = 3;
+            }
+        }
+
+        public override void OnNetworkDespawn()
+        {
+            if (IsOwner)
+            {
+                attackCharges.OnValueChanged -= OnAttackChargesChanged;
+                EventBus.QuestionStarted -= OnQuestionStarted;
+                EventBus.AnswerSubmitted -= OnAnswerSubmitted;
+                EventBus.QuestionTimeout -= OnQuestionTimeout;
+                EventBus.AnswerModeExited -= OnAnswerModeExited;
+                EventBus.PowerPlayStarted -= OnPowerPlayStarted;
+                EventBus.PowerPlayEnded -= OnPowerPlayEnded;
+            }
+        }
 
         void Update()
         {
-            if (!inputEnabled) return;
-            // Allow attacks during Power Play even if answer mode flag is on
-            bool powerPlayActive = false;
-            var ppmCheck = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.PowerPlayManager>();
-            if (ppmCheck != null) powerPlayActive = ppmCheck.Active;
-            // No attacks during answer mode unless Power Play is active
-            if (_inAnswerMode && !powerPlayActive) return;
-            // Short suppression window after submitting an answer to prevent the same click from triggering an attack
-            if (Time.time < _inputSuppressUntil) return;
-            // Block UI clicks (e.g., answer buttons) from triggering attacks
-            if (!powerPlayActive && EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-            // Prevent attacks while inside the station safe zone during question phase
-            if (!powerPlayActive && BossFight2D.Systems.ReadyStation.SafeZoneActive) return;
-            if (Input.GetMouseButtonDown(0)) QueueAttack(defaultDamage);
-        }
+            if (!IsOwner) return;
 
-        void OnAnswerSubmitted(int selected, bool correct)
-        {
-            // Suppress input briefly to avoid attack being queued by the same click that submitted the answer
-            _inputSuppressUntil = Time.time + 0.2f;
-            // Award attack charges on correct answer
-            if (correct)
+            // Determine phase-based gating
+            bool attacksAllowedByPhase = _powerPlayActive || (!blockAttacksDuringQuestion || (!_questionActive && !_answerInteractionActive));
+            bool pastPostAnswerCooldown = Time.time >= _attacksReenabledAtTime;
+
+            // Prevent attack from UI clicks; only allow direct combat input
+            bool clickingOnUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+
+            if (attacksAllowedByPhase && pastPostAnswerCooldown && !clickingOnUI && Input.GetMouseButtonDown(0) && Time.time >= _nextAttackAllowed)
             {
-                attackCharges = Mathf.Clamp(attackCharges + Mathf.Max(1, chargesPerCorrect), 0, Mathf.Max(1, maxAttackCharges));
-                UpdateChargesUI();
+                if (attackCharges.Value > 0)
+                {
+                    RequestAttackServerRpc();
+                }
             }
         }
 
-        void OnQuestionStarted(QuestionData q) { _inAnswerMode = true; }
-        void OnAnswerModeExited() { _inAnswerMode = false; }
-        void OnPowerPlayStarted(float duration) { _inAnswerMode = false; _inputSuppressUntil = 0f; }
-
-        public void QueueAttack(int damage, GameObject target = null)
+        // Ensure the hitbox stays in front of the player based on facing direction
+        private void UpdateHitboxAlignment()
         {
-            // Respect input gating and Answer Mode even if QueueAttack is called externally
-            if (!inputEnabled) return;
-            // Allow attacks during Power Play even if _inAnswerMode is true
-            bool powerPlayActive = false;
-            var ppmCheck = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.PowerPlayManager>();
-            if (ppmCheck != null) powerPlayActive = ppmCheck.Active;
-            if (_inAnswerMode && !powerPlayActive)
+            if (!alignHitboxToFacing || hitbox == null) return;
+            bool flipX = _spriteRenderer != null && _spriteRenderer.flipX;
+            float x = Mathf.Abs(hitboxForwardOffset);
+            Vector3 desiredLocalPos = new Vector3(flipX ? -x : x, hitboxUpOffset, _hitboxDefaultLocalPosition.z);
+            if (hitbox.transform.localPosition != desiredLocalPos)
             {
-                // Block attacks while answering questions; Power Play clears this flag explicitly
-                Debug.Log("PlayerCombat: Attack blocked during AnswerMode");
-                return;
+                hitbox.transform.localPosition = desiredLocalPos;
             }
-            // Suppress accidental double-use from UI clicks
-            if (!powerPlayActive && Time.time < _inputSuppressUntil) return;
-            // Prevent attacks when inside station safe zone during question phase
-            if (!powerPlayActive && BossFight2D.Systems.ReadyStation.SafeZoneActive) return;
-            // Avoid UI pointer-over causing attacks
-            if (!powerPlayActive && EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+            // Keep default rotation (circle colliders don't need rotation); if needed, extend to aim toward mouse.
+        }
 
-            // Require sufficient attack charges to attempt any attack (applies even during Power Play)
-            if (!HasChargesForAttack())
+        [ServerRpc]
+        private void RequestAttackServerRpc()
+        {
+            // Clamp cost to a sane range in case of out-of-range inspector values
+            int cost = Mathf.Clamp(chargeCostPerAttack, 1, maxAttackCharges);
+            int before = attackCharges.Value;
+            Debug.Log($"[PlayerCombat][Server] Attack requested by client {OwnerClientId}: before={before}, cost={cost}, max={maxAttackCharges}");
+            if (attackCharges.Value >= cost)
             {
-                Debug.Log("PlayerCombat: Not enough attack charges");
-                return;
+                attackCharges.Value -= cost;
+                _nextAttackAllowed = Time.time + attackCooldown;
+                int after = attackCharges.Value;
+                Debug.Log($"[PlayerCombat][Server] Attack processed for client {OwnerClientId}: after={after}");
+                // Trigger attack animation on all clients
+                AttackClientRpc();
+            }
+        }
+
+        [ClientRpc]
+        private void AttackClientRpc()
+        {
+            if (animator != null)
+            {
+                animator.SetTrigger("Attack");
+            }
+        }
+
+        public void ActivateHitBox()
+        {
+            // Align hitbox to current facing before activation for precise collisions
+            UpdateHitboxAlignment();
+            // Resolve the hit and damage via the Hitbox.
+            int damageToDeal = defaultDamage;
+            if (PowerPlayManager.Instance != null && PowerPlayManager.Instance.IsPowerPlayActive.Value)
+            {
+                damageToDeal = PowerPlayManager.Instance.ModifyDamageOnBossHit(damageToDeal);
             }
 
-            _queuedDamage = damage;
-            if (Time.time < _nextAttackAllowed) return;
-            DoAttack();
+            if (hitbox != null)
+            {
+                // Activate the hitbox, passing the calculated damage.
+                // The hitbox is responsible for detecting collisions and applying damage.
+                // This assumes Hitbox2D.Activate is updated to take damage.
+                hitbox.Activate(0.5f, damageToDeal);
+            }
+
         }
 
-        void DoAttack()
+        public void DeactivateHitBox()
         {
-            // Final guard to ensure no attacks slip through during Answer Mode
-            if (_inAnswerMode) return;
-            // Consume charges before executing the attack
-            if (!ConsumeChargesForAttack()) return;
-            _nextAttackAllowed = Time.time + attackCooldown;
-            int dmg = _queuedDamage > 0 ? _queuedDamage : defaultDamage;
-            if (animator != null) animator.SetTrigger("Attack");
-            // if (hitbox != null) { hitbox.Activate(hitboxWindow, dmg); Invoke(nameof(EndHitbox), hitboxWindow); }
-            _queuedDamage = 0;
+            if (hitbox != null)
+            {
+                hitbox.Deactivate();
+            }
         }
 
-        void EndHitbox() { if (hitbox != null) hitbox.Deactivate(); }
-
-        public void AnimationEvent_HitboxStart() { if (hitbox != null) { hitbox.Activate(hitboxWindow, _queuedDamage > 0 ? _queuedDamage : defaultDamage); } }
-        public void AnimationEvent_HitboxEnd() { EndHitbox(); }
-
-        // Charges helpers
-        public bool HasChargesForAttack()
-        {
-            return attackCharges >= Mathf.Max(1, chargeCostPerAttack);
-        }
-
-        bool ConsumeChargesForAttack()
-        {
-            int cost = Mathf.Max(1, chargeCostPerAttack);
-            if (attackCharges < cost) return false;
-            attackCharges -= cost;
-            UpdateChargesUI();
-            return true;
-        }
 
         public bool TryConsumeChargeForQuestionEscape()
         {
-            // Spend one charge to exit question mode early
-            if (attackCharges <= 0) return false;
-            attackCharges -= 1;
+            if (attackCharges.Value > 0)
+            {
+                RequestQuestionEscapeServerRpc();
+                return true;
+            }
+            return false;
+        }
+
+        [ServerRpc]
+        private void RequestQuestionEscapeServerRpc()
+        {
+            if (attackCharges.Value > 0)
+            {
+                attackCharges.Value--;
+            }
+        }
+
+        public void SetCombatEnabled(bool enabled)
+        {
+            SetCombatEnabledServerRpc(enabled);
+        }
+
+        [ServerRpc]
+        private void SetCombatEnabledServerRpc(bool enabled)
+        {
+            // On the server, you might want to add logic to prevent players from attacking when combat is disabled.
+            // For now, we'll just rely on the client-side check.
+        }
+
+        public void TriggerAttack()
+        {
+            if (IsServer)
+            {
+                AttackClientRpc();
+            }
+        }
+
+        // Phase event hooks
+        private void OnQuestionStarted(QuestionData q)
+        {
+            if (!IsOwner) return;
+            if (blockAttacksDuringQuestion)
+            {
+                _questionActive = true;
+            }
+        }
+
+        private void OnAnswerSubmitted(int selected, bool correct)
+        {
+            if (!IsOwner) return;
+            // Start cooldown window after answering before attacks are re-enabled
+            _attacksReenabledAtTime = Time.time + postAnswerAttackLockSeconds;
+            // End local answer interaction gating; resolution UI will hide shortly
+            _answerInteractionActive = false;
+        }
+
+        private void OnQuestionTimeout()
+        {
+            if (!IsOwner) return;
+            _questionActive = false;
+            _answerInteractionActive = false;
+        }
+
+        private void OnPowerPlayStarted(float duration)
+        {
+            if (!IsOwner) return;
+            _powerPlayActive = true;
+            // Power Play temporarily overrides question gating
+        }
+
+        private void OnPowerPlayEnded()
+        {
+            if (!IsOwner) return;
+            _powerPlayActive = false;
+        }
+
+        private void OnAnswerModeExited()
+        {
+            if (!IsOwner) return;
+            // Question interaction is fully finished; allow attacks again if cooldown elapsed
+            _questionActive = false;
+            _answerInteractionActive = false;
+            // Do not force-enable attacks here; we respect postAnswerAttackLockSeconds timer
+        }
+
+        private void OnAttackChargesChanged(int previousValue, int newValue)
+        {
             UpdateChargesUI();
-            return true;
+
+            // Update HUD via EventBus
+            EventBus.RaiseChargesChanged(newValue, maxAttackCharges);
+        }
+
+        public void AwardCharges()
+        {
+            if (IsServer)
+            {
+                int before = attackCharges.Value;
+                attackCharges.Value = Mathf.Clamp(attackCharges.Value + chargesPerCorrect, 0, maxAttackCharges);
+                Debug.Log($"[PlayerCombat][Server] AwardCharges to client {OwnerClientId}: before={before}, +{chargesPerCorrect} -> {attackCharges.Value} (max={maxAttackCharges})");
+            }
+        }
+
+        // Instantly fills the player's attack charges to max on the server (used by Power Play)
+        public void FillChargesToMax()
+        {
+            if (IsServer)
+            {
+                int before = attackCharges.Value;
+                attackCharges.Value = maxAttackCharges;
+                Debug.Log($"[PlayerCombat][Server] FillChargesToMax for client {OwnerClientId}: before={before} -> {attackCharges.Value}");
+            }
         }
 
         void UpdateChargesUI()
         {
-            // Placeholder for UI hook: if you assign a Text/Slider/Image in chargesUIPlaceholder,
-            // you can update it here. We keep it minimal per request.
             if (chargesUIPlaceholder == null) return;
-            var txt = chargesUIPlaceholder.GetComponent<Text>();
-            if (txt != null) { txt.text = $"Charges: {attackCharges}/{maxAttackCharges}"; return; }
-            var slider = chargesUIPlaceholder.GetComponent<Slider>();
-            if (slider != null) { slider.maxValue = Mathf.Max(1, maxAttackCharges); slider.value = attackCharges; return; }
-            var img = chargesUIPlaceholder.GetComponent<Image>();
+            var txt = chargesUIPlaceholder.GetComponentInChildren<TextMeshProUGUI>();
+            if (txt != null) { txt.text = $"Charges: {attackCharges.Value}/{maxAttackCharges}"; return; }
+            var slider = chargesUIPlaceholder.GetComponentInChildren<Slider>();
+            if (slider != null) { slider.maxValue = Mathf.Max(1, maxAttackCharges); slider.value = attackCharges.Value; return; }
+            var img = chargesUIPlaceholder.GetComponentInChildren<Image>();
             if (img != null)
             {
-                float pct = Mathf.Clamp01(maxAttackCharges > 0 ? (float)attackCharges / maxAttackCharges : 0f);
+                float pct = Mathf.Clamp01(maxAttackCharges > 0 ? (float)attackCharges.Value / maxAttackCharges : 0f);
                 img.fillAmount = pct;
             }
+        }
+
+        // Keep alignment updated each frame for consistent visuals across clients
+        void LateUpdate()
+        {
+            UpdateHitboxAlignment();
+        }
+
+        // Called from UI (QuestionPanelController) to immediately suppress attacks when the Answer button is pressed
+        public void BeginAnswerInteractionLocal()
+        {
+            if (!IsOwner) return;
+            _answerInteractionActive = true;
+            // Ensure attacks are suppressed for at least the configured lock window
+            _attacksReenabledAtTime = Mathf.Max(_attacksReenabledAtTime, Time.time + postAnswerAttackLockSeconds);
+        }
+
+        // Utility: allow external systems to extend suppression for a custom duration
+        public void SuppressAttacksForSeconds(float duration)
+        {
+            if (!IsOwner) return;
+            _attacksReenabledAtTime = Mathf.Max(_attacksReenabledAtTime, Time.time + Mathf.Max(0f, duration));
         }
     }
 }

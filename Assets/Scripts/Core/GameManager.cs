@@ -1,4 +1,5 @@
 using UnityEngine;
+using BossFight2D.Systems;
 using System;
 using UnityEngine.SceneManagement;
 
@@ -24,6 +25,8 @@ namespace BossFight2D.Core
       // Reset the game state when a new scene is loaded
       State = GameState.Init;
       Time.timeScale = 1f;
+      // Ensure any components that froze on pause resume control after scene transitions
+      Systems.EventBus.RaiseGameResumed();
     }
 
     public void StartGame() { State = GameState.Playing; Systems.EventBus.RaiseGameStarted(); }
@@ -33,7 +36,12 @@ namespace BossFight2D.Core
       State = GameState.Win;
       Systems.EventBus.RaiseGameWon();
     }
-    public void LoseGame() { State = GameState.Lose; Systems.EventBus.RaiseGameLost(); }
+    public void LoseGame()
+    {
+      if (State == GameState.Win || State == GameState.Lose) return;
+      State = GameState.Lose;
+      Systems.EventBus.RaiseGameLost();
+    }
     public void PauseGame()
     {
       // Allow pausing from Init or Playing (block only in Win/Lose/Paused)

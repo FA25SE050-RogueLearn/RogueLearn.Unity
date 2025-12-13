@@ -2,9 +2,16 @@ using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
 using BossFight2D.Systems;
+using BossFight2D.Quiz;
+using Unity.Netcode;
+using BossFight2D.Player;
+using UnityEngine.EventSystems;
 
-namespace BossFight2D.UI {
-    public class QuestionPanelController : MonoBehaviour {
+namespace BossFight2D.UI
+{
+    public class QuestionPanelController : MonoBehaviour
+    {
+        public static QuestionPanelController Instance { get; private set; }
         [Header("UI References")]
         [SerializeField] private TextMeshProUGUI questionText;
         [SerializeField] private Button answerA;
@@ -12,34 +19,33 @@ namespace BossFight2D.UI {
         [SerializeField] private Button answerC;
         [SerializeField] private Button answerD;
         [SerializeField] private Slider timerSlider;
-        
+
         [Header("Text References")]
         [SerializeField] private TextMeshProUGUI answerAText;
         [SerializeField] private TextMeshProUGUI answerBText;
         [SerializeField] private TextMeshProUGUI answerCText;
         [SerializeField] private TextMeshProUGUI answerDText;
 
-        [Header("Lifelines UI")]
-        [SerializeField] private Button lifeline50Button;   // LifeLine1_Button
-        [SerializeField] private Button lifelineFreezeButton; // LifeLine2_Button
-
         [Header("Timer Visuals")]
         [SerializeField] private Image timerFillImage; // Fill image of the slider
         [SerializeField] private Color timerNormalColor = new Color(0.2f, 0.8f, 0.2f);
         [SerializeField] private Color timerWarningColor = new Color(1f, 0.65f, 0f);
         [SerializeField] private Color timerDangerColor = new Color(0.9f, 0.2f, 0.2f);
-        [Range(0f,1f)] [SerializeField] private float warningThreshold = 0.3f;
-        [Range(0f,1f)] [SerializeField] private float dangerThreshold = 0.15f;
+        [Range(0f, 1f)][SerializeField] private float warningThreshold = 0.3f;
+        [Range(0f, 1f)][SerializeField] private float dangerThreshold = 0.15f;
 
-        [Header("Answer Feedback")] 
+        [Header("Answer Feedback")]
         [SerializeField] private Color correctFlashColor = new Color(0.2f, 0.9f, 0.2f);
         [SerializeField] private Color incorrectFlashColor = new Color(0.9f, 0.25f, 0.25f);
         [SerializeField] private float flashDuration = 0.35f;
-        
-        private QuestionManager questionManager;
-        private LifelineSystem lifelineSystem;
+
         private bool isActive = false;
-        private bool fiftyApplied = false;
+        [Header("Transitions & Debug")]
+        [SerializeField] private bool useFadeTransitions = true;
+        [SerializeField] private float fadeOutDuration = 0.2f;
+        [SerializeField] private float fadeInDuration = 0.2f;
+        [SerializeField] private bool debugPanelState = true;
+        private CanvasGroup _canvasGroup;
 
         // Cache base colors to restore after flashes
         private Color baseColorA = Color.white;
@@ -51,9 +57,18 @@ namespace BossFight2D.UI {
         bool showAdvancePrompt = false;
         bool showPowerPlayBanner = false;
         float powerPlayEndTime = 0f;
-        
+
         void Awake()
         {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(this);
+            }
+            else
+            {
+                Instance = this;
+            }
+
             // Prefer an explicitly named child for the question prompt
             if (questionText == null)
             {
@@ -73,18 +88,18 @@ namespace BossFight2D.UI {
                     questionText = GetComponentInChildren<TextMeshProUGUI>();
                 }
             }
-            
+
             if (answerA == null) answerA = transform.Find("Answer_A")?.GetComponent<Button>();
             if (answerB == null) answerB = transform.Find("Answer_B")?.GetComponent<Button>();
             if (answerC == null) answerC = transform.Find("Answer_C")?.GetComponent<Button>();
             if (answerD == null) answerD = transform.Find("Answer_D")?.GetComponent<Button>();
-            
+
             // Get text components from buttons
             if (answerAText == null && answerA != null) answerAText = answerA.GetComponentInChildren<TextMeshProUGUI>();
             if (answerBText == null && answerB != null) answerBText = answerB.GetComponentInChildren<TextMeshProUGUI>();
             if (answerCText == null && answerC != null) answerCText = answerC.GetComponentInChildren<TextMeshProUGUI>();
             if (answerDText == null && answerD != null) answerDText = answerD.GetComponentInChildren<TextMeshProUGUI>();
-            
+
             if (timerSlider == null)
                 timerSlider = GetComponentInChildren<Slider>();
 
@@ -99,67 +114,62 @@ namespace BossFight2D.UI {
             if (answerB != null && answerB.targetGraphic != null) baseColorB = answerB.targetGraphic.color;
             if (answerC != null && answerC.targetGraphic != null) baseColorC = answerC.targetGraphic.color;
             if (answerD != null && answerD.targetGraphic != null) baseColorD = answerD.targetGraphic.color;
+
+            // Setup CanvasGroup for fade transitions
+            _canvasGroup = GetComponent<CanvasGroup>();
+            if (_canvasGroup == null && useFadeTransitions)
+            {
+                _canvasGroup = gameObject.AddComponent<CanvasGroup>();
+                _canvasGroup.alpha = 0f;
+            }
         }
-        
+
         void Start()
         {
-            questionManager = FindFirstObjectByType<QuestionManager>();
-            lifelineSystem = FindFirstObjectByType<LifelineSystem>();
-            
             // Wire up answer button events
             if (answerA != null) answerA.onClick.AddListener(() => SubmitAnswer(0));
             if (answerB != null) answerB.onClick.AddListener(() => SubmitAnswer(1));
             if (answerC != null) answerC.onClick.AddListener(() => SubmitAnswer(2));
             if (answerD != null) answerD.onClick.AddListener(() => SubmitAnswer(3));
 
-            // Resolve and wire lifeline buttons by name if not assigned
-            if (lifeline50Button == null)
-            {
-                var go = GameObject.Find("LifeLine1_Button");
-                if (go != null) lifeline50Button = go.GetComponent<Button>();
-            }
-            if (lifelineFreezeButton == null)
-            {
-                var go = GameObject.Find("LifeLine2_Button");
-                if (go != null) lifelineFreezeButton = go.GetComponent<Button>();
-            }
-            if (lifeline50Button != null) lifeline50Button.onClick.AddListener(OnFiftyFiftyClicked);
-            if (lifelineFreezeButton != null) lifelineFreezeButton.onClick.AddListener(OnFreezeClicked);
-            
+            // Suppress attacks on pointer down so the click does not trigger combat before OnClick
+            SetupPointerDownSuppressor(answerA);
+            SetupPointerDownSuppressor(answerB);
+            SetupPointerDownSuppressor(answerC);
+            SetupPointerDownSuppressor(answerD);
+
             // Subscribe to events
-            EventBus.QuestionStarted += OnQuestionStarted;
-            EventBus.AnswerSubmitted += OnAnswerSubmitted;
-            EventBus.QuestionTimeout += OnQuestionTimeout;
             EventBus.AdvancePromptShown += OnAdvanceShown;
             EventBus.AdvancePromptHidden += OnAdvanceHidden;
             EventBus.PowerPlayStarted += OnPowerPlayStarted;
             EventBus.PowerPlayEnded += OnPowerPlayEnded;
-            
+            EventBus.GameWon += OnGameEnded;
+            EventBus.GameLost += OnGameEnded;
+
             // Validate bindings and warn if anything is missing
             ValidateReferences();
-            
+
             // Start hidden
             gameObject.SetActive(false);
         }
-        
+
         void OnDestroy()
         {
             // Unsubscribe from events
-            EventBus.QuestionStarted -= OnQuestionStarted;
-            EventBus.AnswerSubmitted -= OnAnswerSubmitted;
-            EventBus.QuestionTimeout -= OnQuestionTimeout;
             EventBus.AdvancePromptShown -= OnAdvanceShown;
             EventBus.AdvancePromptHidden -= OnAdvanceHidden;
             EventBus.PowerPlayStarted -= OnPowerPlayStarted;
             EventBus.PowerPlayEnded -= OnPowerPlayEnded;
+            EventBus.GameWon -= OnGameEnded;
+            EventBus.GameLost -= OnGameEnded;
         }
-        
+
         void Update()
         {
-            if (isActive && questionManager != null && timerSlider != null)
+            if (isActive && QuizManager.Instance != null && timerSlider != null)
             {
-                // Update timer visual
-                float progress = questionManager.RemainingTime / GetCurrentQuestionTimeLimit();
+                // Update timer visual based on server-driven value
+                float progress = QuizManager.Instance.RemainingTime.Value / QuizManager.Instance.CurrentQuestionTimeLimit.Value;
                 progress = Mathf.Clamp01(progress);
                 timerSlider.value = progress;
 
@@ -175,21 +185,29 @@ namespace BossFight2D.UI {
                 }
             }
         }
-        
-        private void OnQuestionStarted(QuestionData question)
+
+        public void ShowQuestion(QuestionData question)
         {
             // Ensure no pending hide from previous question interferes
             CancelInvoke(nameof(HidePanel));
 
             isActive = true;
             gameObject.SetActive(true);
-            fiftyApplied = false;
+            if (useFadeTransitions && _canvasGroup != null)
+            {
+                StopAllCoroutines();
+                StartCoroutine(FadeCanvas(1f, fadeInDuration));
+            }
+            if (debugPanelState)
+            {
+                LogPanelState("ShowQuestion");
+            }
             showAdvancePrompt = false; // hidden while a question is active
-            
+
             // Populate question text
             if (questionText != null)
                 questionText.text = question.prompt;
-            
+
             // Populate answer options
             if (question.options != null && question.options.Length >= 4)
             {
@@ -198,7 +216,7 @@ namespace BossFight2D.UI {
                 if (answerCText != null) answerCText.text = "C) " + question.options[2];
                 if (answerDText != null) answerDText.text = "D) " + question.options[3];
             }
-            
+
             // Reset timer
             if (timerSlider != null)
             {
@@ -207,89 +225,93 @@ namespace BossFight2D.UI {
             }
             if (timerFillImage != null)
                 timerFillImage.color = timerNormalColor;
-            
+
             // Enable buttons and reset visuals/visibility
             SetButtonsInteractable(true);
             ResetAnswerVisibilityAndColors();
-
-            // Re-enable lifeline buttons for the new question
-            if (lifeline50Button != null) lifeline50Button.interactable = true;
-            if (lifelineFreezeButton != null) lifelineFreezeButton.interactable = true;
         }
-        
-        private void OnAnswerSubmitted(int selectedIndex, bool correct)
+
+        public void ShowResolution(int selectedIndex, bool isCorrect, int correctIndex)
         {
             isActive = false;
             SetButtonsInteractable(false);
 
-            // Flash selected button to indicate correctness
-            var selectedBtn = GetButtonByIndex(selectedIndex);
-            if (selectedBtn != null)
-                StartCoroutine(FlashButton(selectedBtn, correct ? correctFlashColor : incorrectFlashColor, flashDuration));
-            
-            // Optional: Briefly show correct answer before hiding
-            Invoke(nameof(HidePanel), 1.5f);
+            // Notify HUD of question answer
+            EventBus.RaiseQuestionAnswered(isCorrect);
+
+            // Flash the selected button to indicate correctness
+            if (selectedIndex >= 0)
+            {
+                var selectedBtn = GetButtonByIndex(selectedIndex);
+                if (selectedBtn != null)
+                    StartCoroutine(FlashButton(selectedBtn, isCorrect ? correctFlashColor : incorrectFlashColor, flashDuration));
+            }
+
+            // Highlight the correct answer if the player was wrong
+            if (!isCorrect)
+            {
+                var correctBtn = GetButtonByIndex(correctIndex);
+                if (correctBtn != null)
+                    StartCoroutine(FlashButton(correctBtn, correctFlashColor, flashDuration));
+            }
+
+            // Hide the panel after a delay
+            Invoke(nameof(HidePanel), 2.5f);
         }
-        
-        private void OnQuestionTimeout()
+
+        public void HidePanel()
         {
-            isActive = false;
-            SetButtonsInteractable(false);
-            HidePanel();
+            // Raise AnswerModeExited to let systems re-enable input/combat appropriately
+            EventBus.RaiseAnswerModeExited();
+
+            if (debugPanelState)
+            {
+                LogPanelState("HidePanel");
+            }
+
+            if (useFadeTransitions && _canvasGroup != null && gameObject.activeSelf)
+            {
+                StopAllCoroutines();
+                StartCoroutine(FadeOutAndDeactivate());
+            }
+            else
+            {
+                gameObject.SetActive(false);
+            }
         }
-        
+
         private void SubmitAnswer(int choice)
         {
-            if (questionManager != null && isActive)
+            if (QuizManager.Instance != null && isActive)
             {
-                questionManager.SubmitAnswer(choice);
+                // Immediately suppress local player attacks for the duration of post-answer lock
+                var localCombat = FindLocalPlayerCombat();
+                if (localCombat != null)
+                {
+                    localCombat.BeginAnswerInteractionLocal();
+                }
+                // Send the answer through the network so non-host clients are handled correctly
+                QuizManager.Instance.SubmitAnswerServerRpc(choice);
+                SetButtonsInteractable(false); // Prevent multiple submissions
             }
         }
 
-        private void OnFiftyFiftyClicked()
+        private PlayerCombat FindLocalPlayerCombat()
         {
-            if (!isActive || questionManager == null || fiftyApplied) return;
-            if (lifelineSystem == null) lifelineSystem = FindFirstObjectByType<LifelineSystem>();
-            if (lifelineSystem != null && lifelineSystem.UseFiftyFifty(questionManager))
+            var combats = Object.FindObjectsOfType<PlayerCombat>();
+            foreach (var pc in combats)
             {
-                ApplyFiftyFifty();
-                fiftyApplied = true;
-                if (lifeline50Button != null) lifeline50Button.interactable = false;
+                if (pc.IsOwner) return pc;
             }
+            return null;
         }
 
-        private void OnFreezeClicked()
-        {
-            if (!isActive || questionManager == null) return;
-            if (lifelineSystem == null) lifelineSystem = FindFirstObjectByType<LifelineSystem>();
-            if (lifelineSystem != null && lifelineSystem.UseFreeze(questionManager))
-            {
-                if (lifelineFreezeButton != null) lifelineFreezeButton.interactable = false;
-            }
-        }
-        
-        private void HidePanel()
-        {
-            gameObject.SetActive(false);
-        }
-        
         private void SetButtonsInteractable(bool interactable)
         {
             if (answerA != null) answerA.interactable = interactable;
             if (answerB != null) answerB.interactable = interactable;
             if (answerC != null) answerC.interactable = interactable;
             if (answerD != null) answerD.interactable = interactable;
-        }
-        
-        private float GetCurrentQuestionTimeLimit()
-        {
-            if (questionManager?.Pack?.questions != null && 
-                questionManager.CurrentIndex >= 0 && 
-                questionManager.CurrentIndex < questionManager.Pack.questions.Count)
-            {
-                return questionManager.Pack.questions[questionManager.CurrentIndex].timeLimitSec;
-            }
-            return 20f; // Default fallback
         }
 
         private void ResetAnswerVisibilityAndColors()
@@ -314,33 +336,6 @@ namespace BossFight2D.UI {
                 answerD.gameObject.SetActive(true);
                 if (answerD.targetGraphic != null) answerD.targetGraphic.color = baseColorD;
             }
-        }
-
-        private void ApplyFiftyFifty()
-        {
-            // Hide two wrong options
-            if (questionManager?.Pack?.questions == null) return;
-            var q = questionManager.Pack.questions[questionManager.CurrentIndex];
-            int correct = q.correctIndex;
-            // Collect wrong indices
-            System.Collections.Generic.List<int> wrong = new System.Collections.Generic.List<int>();
-            for (int i = 0; i < 4 && i < (q.options?.Length ?? 0); i++)
-            {
-                if (i != correct) wrong.Add(i);
-            }
-            if (wrong.Count < 2) return;
-            // Randomly select two wrong indices to hide
-            int i1 = Random.Range(0, wrong.Count);
-            int first = wrong[i1];
-            wrong.RemoveAt(i1);
-            int i2 = Random.Range(0, wrong.Count);
-            int second = wrong[i2];
-
-            // Hide the selected wrong answers
-            var b1 = GetButtonByIndex(first);
-            var b2 = GetButtonByIndex(second);
-            if (b1 != null) b1.gameObject.SetActive(false);
-            if (b2 != null) b2.gameObject.SetActive(false);
         }
 
         private UnityEngine.UI.Button GetButtonByIndex(int idx)
@@ -395,32 +390,142 @@ namespace BossFight2D.UI {
                 Debug.LogWarning("QuestionPanelController: Timer Slider was not found. Timer UI will not update.");
             if (timerSlider != null && timerFillImage == null)
                 Debug.LogWarning("QuestionPanelController: Timer fill Image not found. Urgency coloring will be disabled.");
-            if (lifeline50Button == null)
-                Debug.LogWarning("QuestionPanelController: LifeLine1_Button not found in scene. 50/50 lifeline will not be clickable.");
-            if (lifelineFreezeButton == null)
-                Debug.LogWarning("QuestionPanelController: LifeLine2_Button not found in scene. Freeze lifeline will not be clickable.");
-        }
-        
-        // Event handlers for overlays
-        void OnAdvanceShown(){ showAdvancePrompt = true; }
-        void OnAdvanceHidden(){ showAdvancePrompt = false; }
-        void OnPowerPlayStarted(float duration){ showPowerPlayBanner = true; powerPlayEndTime = Time.time + duration; }
-        void OnPowerPlayEnded(){ showPowerPlayBanner = false; }
 
-        void OnGUI(){
+            if (debugPanelState)
+            {
+                var canvases = GetComponentsInParent<Canvas>(true);
+                foreach (var c in canvases)
+                {
+                    Debug.Log($"[QPC] Canvas '{c.name}': renderMode={c.renderMode}, sortLayerID={c.sortingLayerID}, sortOrder={c.sortingOrder}, overrideSorting={c.overrideSorting}");
+                }
+                var ray = GetComponentInParent<UnityEngine.UI.GraphicRaycaster>();
+                Debug.Log($"[QPC] GraphicRaycaster present: {(ray != null)}; EventSystem present: {(EventSystem.current != null)}; Panel layer: {gameObject.layer}");
+                Debug.Log($"[QPC] CanvasGroup present: {(_canvasGroup != null)}; useFadeTransitions={useFadeTransitions}");
+            }
+        }
+
+        // Event handlers for overlays
+        void OnAdvanceShown() { showAdvancePrompt = true; }
+        void OnAdvanceHidden() { showAdvancePrompt = false; }
+        void OnPowerPlayStarted(float duration)
+        {
+            showPowerPlayBanner = true; powerPlayEndTime = Time.time + duration;
+            if (debugPanelState)
+            {
+                Debug.Log($"[QPC] Power Play START (duration={duration:F2}s). Panel active={gameObject.activeSelf}, isActiveFlag={isActive}");
+            }
+            // Immediately pause question/answer interaction during Power Play
+            CancelInvoke(nameof(HidePanel));
+            SetButtonsInteractable(false);
+            isActive = false;
+            // Force immediate hide to avoid any fade-in/out race conditions
+            ImmediateHidePanel();
+        }
+        void OnPowerPlayEnded() { showPowerPlayBanner = false; if (debugPanelState) Debug.Log("[QPC] Power Play END."); }
+        void OnGameEnded()
+        {
+            // Immediately hide the panel on win/lose
+            ImmediateHidePanel();
+        }
+
+        void OnGUI()
+        {
             // Simple overlay prompts for prototype
-            if(showAdvancePrompt){
+            if (showAdvancePrompt)
+            {
                 var gm = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>();
-                if(gm!=null && gm.State==BossFight2D.Core.GameState.Playing){
-                    var style = new GUIStyle(GUI.skin.label); style.fontSize=20; style.alignment=TextAnchor.LowerCenter; style.normal.textColor=Color.white;
-                    GUI.Label(new Rect(0, Screen.height-40, Screen.width, 30), "Press E to continue", style);
+                if (gm != null && gm.State == BossFight2D.Core.GameState.Playing)
+                {
+                    var style = new GUIStyle(GUI.skin.label); style.fontSize = 20; style.alignment = TextAnchor.LowerCenter; style.normal.textColor = Color.white;
+                    GUI.Label(new Rect(0, Screen.height - 40, Screen.width, 30), "Press E to continue", style);
                 }
             }
-            if(showPowerPlayBanner){
+            if (showPowerPlayBanner)
+            {
                 float remaining = Mathf.Max(0f, powerPlayEndTime - Time.time);
                 string txt = $"POWER PLAY! First Hit Bonus – {Mathf.CeilToInt(remaining)}s";
-                var style2 = new GUIStyle(GUI.skin.box); style2.fontSize=18; style2.alignment=TextAnchor.UpperCenter;
-                GUI.Box(new Rect(Screen.width/2 - 180, 10, 360, 28), txt, style2);
+                var style2 = new GUIStyle(GUI.skin.box); style2.fontSize = 18; style2.alignment = TextAnchor.UpperCenter;
+                GUI.Box(new Rect(Screen.width / 2 - 180, 10, 360, 28), txt, style2);
+            }
+        }
+
+        private System.Collections.IEnumerator FadeOutAndDeactivate()
+        {
+            yield return FadeCanvas(0f, fadeOutDuration);
+            gameObject.SetActive(false);
+        }
+
+        private System.Collections.IEnumerator FadeCanvas(float targetAlpha, float duration)
+        {
+            if (_canvasGroup == null)
+            {
+                yield break;
+            }
+            float start = _canvasGroup.alpha;
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.unscaledDeltaTime;
+                float a = Mathf.Lerp(start, targetAlpha, duration > 0f ? (t / duration) : 1f);
+                _canvasGroup.alpha = a;
+                yield return null;
+            }
+            _canvasGroup.alpha = targetAlpha;
+        }
+
+        private void LogPanelState(string context)
+        {
+            Debug.Log($"[QPC] {context}: activeSelf={gameObject.activeSelf}, isActiveFlag={isActive}, canvasGroupAlpha={(_canvasGroup != null ? _canvasGroup.alpha : -1f)}");
+        }
+
+        private void ImmediateHidePanel()
+        {
+            // Raise exit event and hide instantly
+            EventBus.RaiseAnswerModeExited();
+            StopAllCoroutines();
+            if (_canvasGroup != null) _canvasGroup.alpha = 0f;
+            gameObject.SetActive(false);
+            if (debugPanelState)
+            {
+                LogPanelState("ImmediateHidePanel");
+            }
+        }
+
+        /// <summary>
+        /// Set up a button to suppress PointerDown events when pressed.
+        /// This is useful for buttons that trigger answer interactions.
+        /// Avoid trigger attack of the character while answering.
+        /// </summary>
+        private void SetupPointerDownSuppressor(Button btn)
+        {
+            if (btn == null) return;
+            var trigger = btn.GetComponent<EventTrigger>();
+            if (trigger == null)
+            {
+                trigger = btn.gameObject.AddComponent<EventTrigger>();
+            }
+            // Avoid duplicate entries
+            bool hasPointerDown = false;
+            foreach (var e in trigger.triggers)
+            {
+                if (e.eventID == EventTriggerType.PointerDown) { hasPointerDown = true; break; }
+            }
+            if (!hasPointerDown)
+            {
+                var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+                entry.callback.AddListener((BaseEventData data) =>
+                {
+                    var localCombat = FindLocalPlayerCombat();
+                    if (localCombat != null)
+                    {
+                        localCombat.BeginAnswerInteractionLocal();
+                        if (debugPanelState)
+                        {
+                            Debug.Log("[QPC] PointerDown suppression: BeginAnswerInteractionLocal invoked.");
+                        }
+                    }
+                });
+                trigger.triggers.Add(entry);
             }
         }
     }
