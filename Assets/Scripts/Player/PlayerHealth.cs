@@ -40,8 +40,9 @@ namespace BossFight2D.Player {
         if (hearts.Value == 0)
         {
             OnDeath?.Invoke(); 
-            BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>()?.LoseGame();
-            NetworkGameState.ServerSetLose();
+            var gm = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>();
+            if (gm != null) gm.LoseGame();
+            else NetworkGameState.ServerSetLose();
         }
     }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Collections;
 using System.Collections.Generic;
@@ -18,6 +18,7 @@ namespace BossFight2D.Systems
     /// </summary>
     public class ServerMatchRecorder : MonoBehaviour
     {
+        public static ServerMatchRecorder Instance { get; private set; }
         [Serializable]
         public class QuestionResult
         {
@@ -99,6 +100,14 @@ namespace BossFight2D.Systems
                 return;
             }
 
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+
             DontDestroyOnLoad(gameObject);
             _startTimeUtc = DateTime.UtcNow;
             _matchId = Guid.NewGuid().ToString("N");
@@ -123,6 +132,7 @@ namespace BossFight2D.Systems
 
         private void OnDestroy()
         {
+            if (Instance == this) Instance = null;
             EventBus.GameWon -= OnGameWon;
             EventBus.GameLost -= OnGameLost;
             EventBus.QuestionStarted -= OnQuestionStarted;
@@ -445,9 +455,28 @@ namespace BossFight2D.Systems
                 request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
 
-                // For local development: Accept self-signed certificates
-                request.certificateHandler = new AcceptAllCertificatesHandler();
-                request.disposeCertificateHandlerOnDispose = true;
+                try
+                {
+                    var apiKey = System.Environment.GetEnvironmentVariable("RL_GAME_API_KEY")
+                        ?? System.Environment.GetEnvironmentVariable("GAME_API_KEY");
+                    if (!string.IsNullOrWhiteSpace(apiKey))
+                    {
+                        request.SetRequestHeader("X-Game-Api-Key", apiKey);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    var insecure = System.Environment.GetEnvironmentVariable("INSECURE_TLS");
+                    var insecureTls = string.Equals(insecure, "1", StringComparison.OrdinalIgnoreCase);
+                    if (insecureTls && Application.platform != RuntimePlatform.WebGLPlayer)
+                    {
+                        request.certificateHandler = new AcceptAllCertificatesHandler();
+                        request.disposeCertificateHandlerOnDispose = true;
+                    }
+                }
+                catch { }
 
                 yield return request.SendWebRequest();
 

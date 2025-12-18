@@ -255,6 +255,16 @@ namespace BossFight2D.Systems
             Debug.Log($"[GameSessionClient] Resolving join code via {resolveUrl}");
             using (var req = UnityWebRequest.Get(resolveUrl))
             {
+                try
+                {
+                    var apiKey = System.Environment.GetEnvironmentVariable("RL_GAME_API_KEY")
+                        ?? System.Environment.GetEnvironmentVariable("GAME_API_KEY");
+                    if (!string.IsNullOrWhiteSpace(apiKey))
+                    {
+                        req.SetRequestHeader("X-Game-Api-Key", apiKey);
+                    }
+                }
+                catch { }
                 if (insecureTls && Application.platform != RuntimePlatform.WebGLPlayer)
                 {
                     req.certificateHandler = new InsecureCertHandler();
@@ -299,6 +309,16 @@ namespace BossFight2D.Systems
             Debug.Log($"[GameSessionClient] Fetching pack: {fullPackUrl}");
             using (var req2 = UnityWebRequest.Get(fullPackUrl))
             {
+                try
+                {
+                    var apiKey = System.Environment.GetEnvironmentVariable("RL_GAME_API_KEY")
+                        ?? System.Environment.GetEnvironmentVariable("GAME_API_KEY");
+                    if (!string.IsNullOrWhiteSpace(apiKey))
+                    {
+                        req2.SetRequestHeader("X-Game-Api-Key", apiKey);
+                    }
+                }
+                catch { }
                 if (insecureTls && Application.platform != RuntimePlatform.WebGLPlayer)
                 {
                     req2.certificateHandler = new InsecureCertHandler();
@@ -340,6 +360,13 @@ namespace BossFight2D.Systems
                     req.SetRequestHeader("Content-Type", "application/json");
                     req.SetRequestHeader("X-Rogue-Format", "v2");
                     req.SetRequestHeader("X-Rogue-Sender", "server");
+                    try
+                    {
+                        var apiKey = System.Environment.GetEnvironmentVariable("RL_GAME_API_KEY")
+                            ?? System.Environment.GetEnvironmentVariable("GAME_API_KEY");
+                        if (!string.IsNullOrWhiteSpace(apiKey)) req.SetRequestHeader("X-Game-Api-Key", apiKey);
+                    }
+                    catch { }
                     try
                     {
                         var token = System.Environment.GetEnvironmentVariable("RESULTS_HTTP_TOKEN");
@@ -435,6 +462,14 @@ namespace BossFight2D.Systems
                     req.SetRequestHeader("Content-Type", "application/json");
                     req.SetRequestHeader("X-Rogue-Format", "v2");
                     req.SetRequestHeader("X-Rogue-Sender", "server");
+
+                    try
+                    {
+                        var apiKey = System.Environment.GetEnvironmentVariable("RL_GAME_API_KEY")
+                            ?? System.Environment.GetEnvironmentVariable("GAME_API_KEY");
+                        if (!string.IsNullOrWhiteSpace(apiKey)) req.SetRequestHeader("X-Game-Api-Key", apiKey);
+                    }
+                    catch { }
 
                     try
                     {

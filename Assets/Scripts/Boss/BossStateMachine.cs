@@ -19,6 +19,7 @@ namespace BossFight2D.Boss
 
     public Animator animator;
     bool perfectSuccess;
+    bool deathTriggered;
 
     void Awake()
     {
@@ -46,7 +47,6 @@ namespace BossFight2D.Boss
       if (bossHealth.currentHealth.Value <= 0)
       {
         phase = BossPhase.Dead;
-        BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>()?.WinGame();
       }
       else if (bossHealth.currentHealth.Value <= 500 && phase == BossPhase.Phase1)
       {
@@ -125,14 +125,27 @@ namespace BossFight2D.Boss
 
     void OnGameWon()
     {
+      if (deathTriggered) return;
+      deathTriggered = true;
+
       var na = GetComponent<NetworkAnimator>();
-      if (Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsServer && na != null)
+
+      var nm = Unity.Netcode.NetworkManager.Singleton;
+      if (nm != null)
       {
-        na.SetTrigger("Death");
+        if (nm.IsServer)
+        {
+          if (na != null) na.SetTrigger("Death");
+          else if (animator != null) animator.SetTrigger("Death");
+        }
+        else
+        {
+          if (na == null && animator != null) animator.SetTrigger("Death");
+        }
       }
-      else if (animator != null)
+      else
       {
-        animator.SetTrigger("Death");
+        if (animator != null) animator.SetTrigger("Death");
       }
 
       // Ensure boss combat/Hitbox are disabled after victory to prevent stray interactions

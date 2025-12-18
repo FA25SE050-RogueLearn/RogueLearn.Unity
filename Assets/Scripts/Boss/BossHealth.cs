@@ -43,21 +43,8 @@ public class BossHealth : NetworkBehaviour
                 _defeated = true;
                 Debug.Log("Boss has been defeated!");
                 var gm = BossFight2D.Core.GameObjectFactory.FindOrCreate<BossFight2D.Core.GameManager>();
-                if (gm != null)
-                {
-                    gm.WinGame();
-                }
-                NetworkGameState.ServerSetWin();
-                var sm = GetComponent<BossStateMachine>();
-                if (sm != null)
-                {
-                    if (sm.animator != null) sm.animator.SetTrigger("Death");
-                    if (sm.combat != null)
-                    {
-                        sm.combat.enabled = false;
-                        if (sm.combat.hitbox != null) sm.combat.hitbox.Deactivate();
-                    }
-                }
+                if (gm != null) gm.WinGame();
+                else NetworkGameState.ServerSetWin();
             }
         }
     }
