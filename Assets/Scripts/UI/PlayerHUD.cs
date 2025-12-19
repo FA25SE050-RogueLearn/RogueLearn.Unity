@@ -2,6 +2,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using Unity.Netcode;
 
 namespace BossFight2D.UI
 {
@@ -44,8 +45,14 @@ namespace BossFight2D.UI
             }
 
             // Resolve gameplay components
-            if (playerHealth == null) playerHealth = FindFirstObjectByType<BossFight2D.Player.PlayerHealth>();
-            if (playerFocus == null) playerFocus = FindFirstObjectByType<BossFight2D.Player.PlayerFocus>();
+            TryBindLocalPlayerComponents();
+            var nm = NetworkManager.Singleton;
+            var netcodeActive = nm != null && (nm.IsClient || nm.IsServer);
+            if (!netcodeActive)
+            {
+                if (playerHealth == null) playerHealth = FindFirstObjectByType<BossFight2D.Player.PlayerHealth>();
+                if (playerFocus == null) playerFocus = FindFirstObjectByType<BossFight2D.Player.PlayerFocus>();
+            }
 
             // Initialize once
             UpdateBars(force: true);
@@ -53,8 +60,29 @@ namespace BossFight2D.UI
 
         private void Update()
         {
+            if (playerHealth == null || playerFocus == null)
+            {
+                TryBindLocalPlayerComponents();
+            }
             // Polling approach keeps UI in sync without requiring gameplay events
             UpdateBars(force: false);
+        }
+
+        private void TryBindLocalPlayerComponents()
+        {
+            var nm = NetworkManager.Singleton;
+            var localPlayerObject = nm != null ? nm.LocalClient?.PlayerObject : null;
+            if (localPlayerObject == null) return;
+
+            if (playerHealth == null)
+            {
+                playerHealth = localPlayerObject.GetComponent<BossFight2D.Player.PlayerHealth>();
+            }
+
+            if (playerFocus == null)
+            {
+                playerFocus = localPlayerObject.GetComponent<BossFight2D.Player.PlayerFocus>();
+            }
         }
 
         private void UpdateBars(bool force)

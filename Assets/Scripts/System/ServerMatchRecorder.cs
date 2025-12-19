@@ -329,6 +329,54 @@ namespace BossFight2D.Systems
             }
         }
 
+        private PlayerSummary[] ComputePlayerSummariesFromQuestionResults(List<ulong> players)
+        {
+            var summaries = new List<PlayerSummary>();
+            foreach (var playerId in players)
+            {
+                int totalQuestions = 0;
+                int correctAnswers = 0;
+                float totalTime = 0f;
+                var topicStats = new Dictionary<string, (int correct, int total)>();
+
+                foreach (var question in _questionResults)
+                {
+                    var playerAnswer = question.playerAnswers != null
+                        ? question.playerAnswers.FirstOrDefault(pa => pa.playerId == playerId)
+                        : null;
+                    if (playerAnswer == null) continue;
+
+                    totalQuestions++;
+                    totalTime += playerAnswer.timeToAnswer;
+                    if (playerAnswer.correct) correctAnswers++;
+
+                    var topic = string.IsNullOrWhiteSpace(question.topic) ? "(untagged)" : question.topic;
+                    if (!topicStats.TryGetValue(topic, out var ts)) ts = (0, 0);
+                    ts.total += 1;
+                    if (playerAnswer.correct) ts.correct += 1;
+                    topicStats[topic] = ts;
+                }
+
+                var topicBreakdown = topicStats.Select(kvp => new TopicAccuracy
+                {
+                    topic = kvp.Key,
+                    correct = kvp.Value.correct,
+                    total = kvp.Value.total
+                }).ToArray();
+
+                summaries.Add(new PlayerSummary
+                {
+                    playerId = playerId,
+                    totalQuestions = totalQuestions,
+                    correctAnswers = correctAnswers,
+                    averageTime = totalQuestions > 0 ? totalTime / totalQuestions : 0f,
+                    topicBreakdown = topicBreakdown
+                });
+            }
+
+            return summaries.ToArray();
+        }
+
         private string ResolveBackendBaseUrl()
         {
             string ResolveFromEnv(params string[] keys)
@@ -381,12 +429,7 @@ namespace BossFight2D.Systems
 
                 Debug.Log($"[ServerMatchRecorder] Found {players.Count} player(s): {string.Join(", ", players)}");
 
-                // Compute INDIVIDUAL per-player summaries from QuizManager
-                // QuizManager has the authoritative stats data
-                var quizManager = QuizManager.Instance;
-                Debug.Log($"[ServerMatchRecorder] QuizManager.Instance: {(quizManager != null ? "Available" : "NULL")}");
-
-                var playerSummaries = ComputePlayerSummariesFromQuizManager(players, quizManager);
+                var playerSummaries = ComputePlayerSummariesFromQuestionResults(players);
 
                 Debug.Log($"[ServerMatchRecorder] Computed {playerSummaries.Length} player summaries");
 

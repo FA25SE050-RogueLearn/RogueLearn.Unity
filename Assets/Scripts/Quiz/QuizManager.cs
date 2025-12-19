@@ -456,6 +456,11 @@ namespace BossFight2D.Quiz
             RemainingTime.Value = question.timeLimitSec;
             var payload = BuildCurrentQuestionPayload();
             ShowQuestionClientRpc(payload);
+
+            if (Application.isBatchMode)
+            {
+                EventBus.RaiseQuestionStarted(question);
+            }
         }
 
         private void ClientShowQuestion(QuestionPayload payload)
@@ -487,7 +492,10 @@ namespace BossFight2D.Quiz
             if (payload.OptionsCount > 3) options[3] = payload.Option4.ToString();
             QuestionData questionData = new QuestionData() { prompt = payload.Prompt.ToString(), options = options };
             panel.ShowQuestion(questionData);
-            EventBus.RaiseQuestionStarted(questionData);
+            if (!Application.isBatchMode)
+            {
+                EventBus.RaiseQuestionStarted(questionData);
+            }
         }
 
         [ClientRpc]
@@ -633,6 +641,11 @@ namespace BossFight2D.Quiz
 
             State.Value = QuizState.Resolution;
             QuestionData question = questions[currentQuestionIndex.Value];
+
+            if (Application.isBatchMode)
+            {
+                EventBus.RaiseAnswerResolved();
+            }
 
             ulong? powerPlayPlayerId = null;
 
