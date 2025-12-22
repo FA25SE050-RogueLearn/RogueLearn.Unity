@@ -22,6 +22,8 @@ namespace BossFight2D.Network
         private static Dictionary<ulong, string> _clientUserIds = new Dictionary<ulong, string>();
         private static PlayerIdentity _instance;
 
+        public static event Action<ulong, string> UserIdRegistered;
+
         public static PlayerIdentity Instance => _instance;
 
         private void Awake()
@@ -38,6 +40,11 @@ namespace BossFight2D.Network
         {
             base.OnNetworkSpawn();
             Debug.Log($"[PlayerIdentity] OnNetworkSpawn - IsClient:{IsClient}, IsServer:{IsServer}, IsHost:{IsHost}, LocalClientId:{NetworkManager.LocalClientId}");
+
+            if (IsServer && NetworkManager.Singleton != null)
+            {
+                NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
+            }
 
             if (IsClient && !IsServer)
             {
@@ -110,10 +117,30 @@ namespace BossFight2D.Network
             {
                 _clientUserIds[clientId] = userId;
                 Debug.Log($"[PlayerIdentity] Server registered userId '{userId}' for clientId {clientId}. Total registered: {_clientUserIds.Count}");
+                UserIdRegistered?.Invoke(clientId, userId);
             }
             else
             {
                 Debug.LogWarning($"[PlayerIdentity] Server received empty userId from clientId {clientId}");
+            }
+        }
+
+        private void OnClientDisconnected(ulong clientId)
+        {
+            if (!IsServer) return;
+            if (_clientUserIds.Remove(clientId))
+            {
+                Debug.Log($"[PlayerIdentity] Removed userId mapping for disconnected clientId {clientId}");
+            }
+        }
+
+        public override void OnNetworkDespawn()
+        {
+            base.OnNetworkDespawn();
+
+            if (IsServer && NetworkManager.Singleton != null)
+            {
+                NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnected;
             }
         }
 
@@ -174,19 +201,5 @@ namespace BossFight2D.Network
             }
         }
 
-        public override void OnNetworkDespawn()
-        {
-            base.OnNetworkDespawn();
-
-            // Clean up when client disconnects
-            if (IsServer && OwnerClientId != NetworkManager.ServerClientId)
-            {
-                bool removed = _clientUserIds.Remove(OwnerClientId);
-                if (removed)
-                {
-                    Debug.Log($"[PlayerIdentity] Removed userId mapping for disconnected clientId {OwnerClientId}");
-                }
-            }
-        }
     }
 }

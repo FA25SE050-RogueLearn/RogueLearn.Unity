@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 using BossFight2D.Systems;
 using BossFight2D.Core;
 using Unity.Netcode.Components;
@@ -21,6 +22,10 @@ namespace BossFight2D.Boss
     bool perfectSuccess;
     bool deathTriggered;
 
+    bool wrongAnswerChallengeActive;
+    int pendingWrongCount;
+    HashSet<ulong> pendingWrongClientIds = new HashSet<ulong>();
+
     void Awake()
     {
       if (combat == null) combat = GetComponent<BossCombat>();
@@ -33,10 +38,34 @@ namespace BossFight2D.Boss
       EventBus.RaiseBossSpawned(bossName, null);
     }
 
-    void OnEnable() { EventBus.PerfectDodgeSuccess += OnPerfectDodgeSuccess; EventBus.GamePaused += OnGamePaused; EventBus.GameResumed += OnGameResumed; EventBus.GameWon += OnGameWon; }
-    void OnDisable() { EventBus.PerfectDodgeSuccess -= OnPerfectDodgeSuccess; EventBus.GamePaused -= OnGamePaused; EventBus.GameResumed -= OnGameResumed; EventBus.GameWon -= OnGameWon; }
+    void OnEnable() { EventBus.PerfectDodgeSuccess += OnPerfectDodgeSuccess; EventBus.WrongAnswerChallengeEnded += OnWrongAnswerChallengeEnded; EventBus.GamePaused += OnGamePaused; EventBus.GameResumed += OnGameResumed; EventBus.GameWon += OnGameWon; }
+    void OnDisable() { EventBus.PerfectDodgeSuccess -= OnPerfectDodgeSuccess; EventBus.WrongAnswerChallengeEnded -= OnWrongAnswerChallengeEnded; EventBus.GamePaused -= OnGamePaused; EventBus.GameResumed -= OnGameResumed; EventBus.GameWon -= OnGameWon; }
 
     void OnPerfectDodgeSuccess() { perfectSuccess = true; }
+
+    void OnWrongAnswerChallengeEnded()
+    {
+      wrongAnswerChallengeActive = false;
+      pendingWrongCount = 0;
+      pendingWrongClientIds.Clear();
+      CancelInvoke();
+    }
+
+    public void BeginWrongAnswerChallenge()
+    {
+      if (wrongAnswerChallengeActive) return;
+      wrongAnswerChallengeActive = true;
+      perfectSuccess = false;
+      pendingWrongCount = 0;
+      pendingWrongClientIds.Clear();
+      OnWrongAnswer();
+    }
+
+    public void RegisterWrongAnswer(ulong clientId)
+    {
+      if (!wrongAnswerChallengeActive) return;
+      if (pendingWrongClientIds.Add(clientId)) pendingWrongCount++;
+    }
 
     public void ApplyDamage(int dmg)
     {
@@ -64,13 +93,20 @@ namespace BossFight2D.Boss
 
     public void OnWrongAnswer()
     {
+      if (!wrongAnswerChallengeActive)
+      {
+        wrongAnswerChallengeActive = true;
+        perfectSuccess = false;
+        pendingWrongCount = 0;
+        pendingWrongClientIds.Clear();
+      }
+
       // Start telegraph, then open a perfect dodge window
       perfectSuccess = false;
       if (combat != null)
       {
         Invoke(nameof(BeginPerfectWindow), wrongTelegraph);
         Invoke(nameof(EndPerfectWindowAndResolve), wrongTelegraph + perfectWindow);
-        EventBus.RaisePerfectDodgeWindowStarted(perfectWindow);
       }
       else
       {
@@ -81,7 +117,7 @@ namespace BossFight2D.Boss
       }
     }
 
-    void BeginPerfectWindow() { /* window open */ }
+    void BeginPerfectWindow() { EventBus.RaisePerfectDodgeWindowStarted(perfectWindow); }
     void EndPerfectWindowAndResolve()
     {
       EventBus.RaisePerfectDodgeWindowEnded();
@@ -94,7 +130,7 @@ namespace BossFight2D.Boss
       if (combat != null)
       {
         // Attack will run; end signal will be raised by BossCombat when hitbox ends
-        combat.QueueAttack(1);
+        combat.QueuePunishAttack(Mathf.Max(1, pendingWrongCount), pendingWrongClientIds);
       }
       else
       {

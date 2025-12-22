@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using Unity.Netcode;
 
 namespace BossFight2D.Combat
 {
@@ -22,11 +23,20 @@ namespace BossFight2D.Combat
     [Tooltip("Valid target layers for this hitbox. Defaults to Everything.")]
     public LayerMask targetLayers = ~0;
 
+    [Header("Damage Delivery")]
+    public bool dedupeByDamageable = false;
+    public bool applyDamageOnDeactivate = false;
+    public bool splitTotalDamageAcrossTargets = false;
+    public bool restrictToOwnerClientIds = false;
+
     int _currentDamage;
     bool _active;
     float _deactivateAt;
     Collider2D _col;
     HashSet<Collider2D> _hitSet = new HashSet<Collider2D>();
+    HashSet<IDamageable> _hitDamageables = new HashSet<IDamageable>();
+    List<IDamageable> _pendingDamageables = new List<IDamageable>();
+    HashSet<ulong> _allowedOwnerClientIds = new HashSet<ulong>();
 
     void Awake()
     {
@@ -45,6 +55,8 @@ namespace BossFight2D.Combat
       _active = true;
       _currentDamage = (damageOverride >= 0 ? damageOverride : defaultDamage);
       _hitSet.Clear();
+      _hitDamageables.Clear();
+      _pendingDamageables.Clear();
       if (disableColliderWhenInactive && _col) _col.enabled = true;
       if (duration > 0f) { autoDeactivateSeconds = duration; _deactivateAt = Time.time + duration; }
       // Debug draw the hitbox shape while active
@@ -53,9 +65,60 @@ namespace BossFight2D.Combat
 
     public void Deactivate()
     {
+      if (_active && applyDamageOnDeactivate && _pendingDamageables.Count > 0)
+      {
+        ApplyPendingDamage();
+      }
       _active = false;
       if (disableColliderWhenInactive && _col) _col.enabled = false;
       _hitSet.Clear();
+      _hitDamageables.Clear();
+      _pendingDamageables.Clear();
+    }
+
+    public void SetAllowedOwnerClientIds(IEnumerable<ulong> clientIds)
+    {
+      _allowedOwnerClientIds.Clear();
+      if (clientIds == null) return;
+      foreach (var id in clientIds) _allowedOwnerClientIds.Add(id);
+    }
+
+    bool IsOwnerAllowed(Collider2D other)
+    {
+      if (!restrictToOwnerClientIds) return true;
+      if (_allowedOwnerClientIds.Count == 0) return false;
+      var netObj = other.GetComponentInParent<NetworkObject>();
+      if (netObj == null) return false;
+      return _allowedOwnerClientIds.Contains(netObj.OwnerClientId);
+    }
+
+    void ApplyPendingDamage()
+    {
+      var count = _pendingDamageables.Count;
+      if (count <= 0) return;
+
+      if (!splitTotalDamageAcrossTargets)
+      {
+        for (int i = 0; i < count; i++)
+        {
+          var dmg = _pendingDamageables[i];
+          if (dmg != null) dmg.TakeDamage(_currentDamage);
+        }
+        return;
+      }
+
+      int total = Mathf.Max(0, _currentDamage);
+      int each = count > 0 ? (total / count) : 0;
+      int rem = count > 0 ? (total % count) : 0;
+
+      for (int i = 0; i < count; i++)
+      {
+        var dmg = _pendingDamageables[i];
+        if (dmg == null) continue;
+        int applied = each + (i < rem ? 1 : 0);
+        if (applied <= 0) continue;
+        dmg.TakeDamage(applied);
+      }
     }
 
     void OnTriggerEnter2D(Collider2D other)
@@ -63,25 +126,39 @@ namespace BossFight2D.Combat
       if (!_active) return;
       if (owner != null && other.transform.IsChildOf(owner.transform)) return;
       if (_hitSet.Contains(other)) return;
+      if (!IsOwnerAllowed(other)) return;
       // Layer mask filter
       if (((1 << other.gameObject.layer) & targetLayers.value) == 0) return;
       // Hurtbox requirement
       IDamageable dmg = null;
       if (requireHurtbox)
       {
-        var hb = other.GetComponent<Hurtbox2D>();
+        var hb = other.GetComponentInParent<Hurtbox2D>();
         if (hb == null) return;
-        Debug.Log($"[Hitbox2D] {name} hit {other.name} with {_currentDamage} damage");
         dmg = hb.GetDamageable();
       }
       else
       {
         dmg = other.GetComponentInParent<IDamageable>();
         if (dmg == null) return;
-        Debug.Log($"[Hitbox2D] {name} hit {other.name} with {_currentDamage} damage");
       }
+
+      if (dmg != null && dedupeByDamageable && _hitDamageables.Contains(dmg))
+      {
+        _hitSet.Add(other);
+        return;
+      }
+
       if (dmg != null)
       {
+        if (applyDamageOnDeactivate)
+        {
+          _pendingDamageables.Add(dmg);
+          if (dedupeByDamageable) _hitDamageables.Add(dmg);
+          _hitSet.Add(other);
+          return;
+        }
+
         // Apply Power Play bonus only when striking the boss, and consume window on successful hit
         int applied = _currentDamage;
         var boss = other.GetComponentInParent<BossHealth>();
@@ -90,6 +167,7 @@ namespace BossFight2D.Combat
         dmg.TakeDamage(applied);
         if (debugLogHits) Debug.Log($"[Hitbox2D] {name} hit {other.name} for {applied}");
         _hitSet.Add(other);
+        if (dedupeByDamageable) _hitDamageables.Add(dmg);
       }
     }
 
@@ -99,13 +177,14 @@ namespace BossFight2D.Combat
       if (!_active) return;
       if (owner != null && other.transform.IsChildOf(owner.transform)) return;
       if (_hitSet.Contains(other)) return;
+      if (!IsOwnerAllowed(other)) return;
       // Layer mask filter
       if (((1 << other.gameObject.layer) & targetLayers.value) == 0) return;
       // Hurtbox requirement
       IDamageable dmg = null;
       if (requireHurtbox)
       {
-        var hb = other.GetComponentInParent<BossFight2D.Combat.Hurtbox2D>();
+        var hb = other.GetComponentInParent<Hurtbox2D>();
         if (hb == null) return;
         dmg = hb.GetDamageable();
       }
@@ -113,15 +192,31 @@ namespace BossFight2D.Combat
       {
         dmg = other.GetComponentInParent<IDamageable>();
       }
+
+      if (dmg != null && dedupeByDamageable && _hitDamageables.Contains(dmg))
+      {
+        _hitSet.Add(other);
+        return;
+      }
+
       if (dmg != null)
       {
+        if (applyDamageOnDeactivate)
+        {
+          _pendingDamageables.Add(dmg);
+          if (dedupeByDamageable) _hitDamageables.Add(dmg);
+          _hitSet.Add(other);
+          return;
+        }
+
         int applied = _currentDamage;
-        var boss = other.GetComponent<BossHealth>();
+        var boss = other.GetComponentInParent<BossHealth>();
         var ppm = BossFight2D.Core.PowerPlayManager.Instance;
         if (ppm != null && boss != null) { applied = ppm.ModifyDamageOnBossHit(applied); BossFight2D.Systems.EventBus.RaisePowerPlayHitConfirmed(); }
         dmg.TakeDamage(applied);
         if (debugLogHits) Debug.Log($"[Hitbox2D] (Stay) {name} hit {other.name} for {applied}");
         _hitSet.Add(other);
+        if (dedupeByDamageable) _hitDamageables.Add(dmg);
       }
     }
 

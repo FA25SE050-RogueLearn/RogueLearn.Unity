@@ -156,35 +156,123 @@ namespace BossFight2D.UI
         {
             Log("Configuring question text...");
 
-            var questionTransform = transform.Find("Question");
-            if (questionTransform != null)
+            var questionTMP = FindQuestionTMP();
+            if (questionTMP == null)
             {
-                var questionTMP = questionTransform.GetComponent<TextMeshProUGUI>();
-                if (questionTMP != null)
-                {
-                    questionTMP.fontSize = questionFontSize;
-                    questionTMP.color = questionTextColor;
-                    questionTMP.alignment = TextAlignmentOptions.Center;
-                    questionTMP.enableWordWrapping = true;
-                    questionTMP.overflowMode = TextOverflowModes.Ellipsis;
-                    questionTMP.lineSpacing = 5f; // 1.3x spacing approximation
-
-                    Log($"  ✓ Set question font size to {questionFontSize}px");
-                    Log($"  ✓ Enabled word wrapping and center alignment");
-                }
-
-                // Configure RectTransform for better layout
-                var questionRect = questionTransform.GetComponent<RectTransform>();
-                if (questionRect != null)
-                {
-                    questionRect.sizeDelta = new Vector2(questionRect.sizeDelta.x, 150f); // Reserve space
-                    Log($"  ✓ Set question area height to 150px");
-                }
+                Log("  ⚠ Question text not found (expected a TMP named 'Question')");
+                return;
             }
-            else
+
+            EnsureQuestionScrollView(questionTMP);
+
+            questionTMP.fontSize = questionFontSize;
+            questionTMP.color = questionTextColor;
+            questionTMP.alignment = TextAlignmentOptions.Top;
+            questionTMP.enableWordWrapping = true;
+            questionTMP.overflowMode = TextOverflowModes.Overflow;
+            questionTMP.lineSpacing = 5f;
+
+            Log($"  ✓ Set question font size to {questionFontSize}px");
+            Log($"  ✓ Enabled word wrapping and scroll overflow");
+        }
+
+        private TextMeshProUGUI FindQuestionTMP()
+        {
+            var direct = transform.Find("Question");
+            if (direct != null)
             {
-                Log("  ⚠ Question text not found (expected child named 'Question')");
+                var tmp = direct.GetComponent<TextMeshProUGUI>();
+                if (tmp != null) return tmp;
             }
+
+            var tmps = GetComponentsInChildren<TextMeshProUGUI>(true);
+            foreach (var t in tmps)
+            {
+                if (t != null && t.gameObject.name == "Question") return t;
+            }
+            return null;
+        }
+
+        private void EnsureQuestionScrollView(TextMeshProUGUI questionTMP)
+        {
+            var existingScroll = questionTMP.GetComponentInParent<ScrollRect>();
+            if (existingScroll != null) return;
+
+            var questionTransform = questionTMP.transform;
+            var questionRect = questionTransform as RectTransform;
+            if (questionRect == null) return;
+
+            var oldParent = questionTransform.parent;
+            int siblingIndex = questionTransform.GetSiblingIndex();
+
+            var scrollRootGo = new GameObject("QuestionScroll", typeof(RectTransform), typeof(Image), typeof(ScrollRect));
+            scrollRootGo.layer = questionTransform.gameObject.layer;
+            var scrollRoot = scrollRootGo.GetComponent<RectTransform>();
+            scrollRoot.SetParent(oldParent, false);
+            scrollRoot.SetSiblingIndex(siblingIndex);
+
+            scrollRoot.anchorMin = questionRect.anchorMin;
+            scrollRoot.anchorMax = questionRect.anchorMax;
+            scrollRoot.pivot = questionRect.pivot;
+            scrollRoot.anchoredPosition = questionRect.anchoredPosition;
+            scrollRoot.sizeDelta = questionRect.sizeDelta;
+            scrollRoot.localScale = questionRect.localScale;
+
+            var bg = scrollRootGo.GetComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0f);
+            bg.raycastTarget = true;
+
+            var viewportGo = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(RectMask2D));
+            viewportGo.layer = scrollRootGo.layer;
+            var viewportRect = viewportGo.GetComponent<RectTransform>();
+            viewportRect.SetParent(scrollRoot, false);
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.sizeDelta = Vector2.zero;
+            viewportRect.anchoredPosition = Vector2.zero;
+            viewportRect.pivot = new Vector2(0.5f, 0.5f);
+
+            var viewportImage = viewportGo.GetComponent<Image>();
+            viewportImage.color = new Color(0f, 0f, 0f, 0f);
+            viewportImage.raycastTarget = true;
+
+            var contentGo = new GameObject("Content", typeof(RectTransform), typeof(ContentSizeFitter));
+            contentGo.layer = scrollRootGo.layer;
+            var contentRect = contentGo.GetComponent<RectTransform>();
+            contentRect.SetParent(viewportRect, false);
+            contentRect.anchorMin = new Vector2(0f, 1f);
+            contentRect.anchorMax = new Vector2(1f, 1f);
+            contentRect.pivot = new Vector2(0.5f, 1f);
+            contentRect.anchoredPosition = Vector2.zero;
+            contentRect.sizeDelta = new Vector2(0f, 0f);
+
+            var fitter = contentGo.GetComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            questionTransform.SetParent(contentRect, false);
+            questionRect.anchorMin = new Vector2(0f, 1f);
+            questionRect.anchorMax = new Vector2(1f, 1f);
+            questionRect.pivot = new Vector2(0.5f, 1f);
+            questionRect.anchoredPosition = Vector2.zero;
+            questionRect.sizeDelta = new Vector2(0f, questionRect.sizeDelta.y);
+
+            var questionFitter = questionTransform.GetComponent<ContentSizeFitter>();
+            if (questionFitter == null)
+            {
+                questionFitter = questionTransform.gameObject.AddComponent<ContentSizeFitter>();
+            }
+            questionFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            questionFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var scrollRect = scrollRootGo.GetComponent<ScrollRect>();
+            scrollRect.viewport = viewportRect;
+            scrollRect.content = contentRect;
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            scrollRect.inertia = true;
+            scrollRect.scrollSensitivity = 30f;
         }
 
         private void ConfigureAnswerButtons()

@@ -14,10 +14,23 @@ namespace BossFight2D.Systems
         [Header("Shutdown Settings")]
         [SerializeField] private float shutdownDelayAfterEmpty = 30f; // Wait 30 seconds after all clients leave
         [SerializeField] private float clientDisconnectDelayAfterMatchEnd = 5f; // Wait 5 seconds after match ends before disconnecting clients
+        [SerializeField] private bool shutdownIfEmptyBeforeMatchEnd = true;
+        [SerializeField] private float shutdownIfNoClientConnectsAfterSeconds = 180f;
+        [SerializeField] private bool shutdownOnTransportFailure = true;
+        [SerializeField] private bool shutdownIfServerStopsListening = true;
+        [SerializeField] private float shutdownIfNeverStartsListeningAfterSeconds = 15f;
+        [SerializeField] private bool forceProcessExitInBatchMode = true;
+        [SerializeField] private float forceProcessExitDelaySeconds = 5f;
 
         private bool _matchEnded = false;
         private Coroutine _shutdownCoroutine;
         private bool _isShuttingDown = false;
+        private bool _everHadClient = false;
+        private bool _monitorStarted = false;
+        private bool _networkCallbacksWired = false;
+        private float _listeningStartTime = -1f;
+        private bool _serverMonitorStarted = false;
+        private float _monitorStartTime = -1f;
 
         private void Awake()
         {
@@ -26,10 +39,17 @@ namespace BossFight2D.Systems
             EventBus.GameLost += OnMatchEnded;
         }
 
+        private void OnEnable()
+        {
+            StartCoroutine(EnsureServerMonitorRunning());
+        }
+
         private void OnDestroy()
         {
             EventBus.GameWon -= OnMatchEnded;
             EventBus.GameLost -= OnMatchEnded;
+
+            UnwireNetworkCallbacks();
         }
 
         private void OnMatchEnded()
@@ -45,11 +65,123 @@ namespace BossFight2D.Systems
                 StartCoroutine(DisconnectClientAfterDelay());
             }
 
-            // On server: start monitoring for empty server
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+            StartCoroutine(EnsureServerMonitorRunning());
+        }
+
+        private IEnumerator EnsureServerMonitorRunning()
+        {
+            if (_monitorStarted) yield break;
+
+            while (NetworkManager.Singleton == null)
             {
-                StartCoroutine(MonitorServerActivity());
+                yield return null;
             }
+
+            if (!Application.isBatchMode && !NetworkManager.Singleton.IsServer)
+            {
+                yield break;
+            }
+
+            _monitorStarted = true;
+            _monitorStartTime = Time.realtimeSinceStartup;
+            WireNetworkCallbacks();
+
+            if (Application.isBatchMode)
+            {
+                StartCoroutine(MonitorHeadlessLifecycle());
+            }
+
+            if (!_serverMonitorStarted && (Application.isBatchMode || NetworkManager.Singleton.IsServer))
+            {
+                _serverMonitorStarted = true;
+                StartCoroutine(WaitForServerThenMonitor());
+            }
+        }
+
+        private IEnumerator WaitForServerThenMonitor()
+        {
+            while (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsServer)
+            {
+                yield return null;
+            }
+
+            if (NetworkManager.Singleton == null) yield break;
+            StartCoroutine(MonitorServerActivity());
+        }
+
+        private IEnumerator MonitorHeadlessLifecycle()
+        {
+            while (true)
+            {
+                var nm = NetworkManager.Singleton;
+                if (nm == null) yield break;
+
+                if (_listeningStartTime < 0f && shutdownIfNeverStartsListeningAfterSeconds > 0f && _monitorStartTime >= 0f)
+                {
+                    var elapsed = Time.realtimeSinceStartup - _monitorStartTime;
+                    if (elapsed >= shutdownIfNeverStartsListeningAfterSeconds)
+                    {
+                        Debug.Log("[AutoShutdown] Headless server did not start listening. Exiting.");
+                        ShutdownServer();
+                        yield break;
+                    }
+                }
+
+                if (_listeningStartTime < 0f && nm.IsListening)
+                {
+                    _listeningStartTime = Time.realtimeSinceStartup;
+                }
+
+                if (shutdownIfServerStopsListening && _listeningStartTime >= 0f && !nm.IsListening)
+                {
+                    Debug.Log("[AutoShutdown] Server stopped listening in headless mode. Exiting.");
+                    ShutdownServer();
+                    yield break;
+                }
+
+                yield return new WaitForSeconds(1f);
+            }
+        }
+
+        private void WireNetworkCallbacks()
+        {
+            if (_networkCallbacksWired) return;
+            if (NetworkManager.Singleton == null) return;
+
+            try
+            {
+                NetworkManager.Singleton.OnTransportFailure += OnTransportFailure;
+                _networkCallbacksWired = true;
+            }
+            catch (Exception)
+            {
+                _networkCallbacksWired = false;
+            }
+        }
+
+        private void UnwireNetworkCallbacks()
+        {
+            if (!_networkCallbacksWired) return;
+            if (NetworkManager.Singleton == null) return;
+
+            try
+            {
+                NetworkManager.Singleton.OnTransportFailure -= OnTransportFailure;
+            }
+            catch (Exception)
+            {
+            }
+
+            _networkCallbacksWired = false;
+        }
+
+        private void OnTransportFailure()
+        {
+            if (!shutdownOnTransportFailure) return;
+            if (!Application.isBatchMode) return;
+
+            Debug.Log("[AutoShutdown] Transport failure detected. Exiting headless server.");
+            ShutdownServer();
         }
 
         /// <summary>
@@ -86,13 +218,33 @@ namespace BossFight2D.Systems
                     yield break;
                 }
 
+                if (_listeningStartTime < 0f && NetworkManager.Singleton.IsListening)
+                {
+                    _listeningStartTime = Time.realtimeSinceStartup;
+                }
+
                 int connectedClients = GetConnectedClientCount();
+                if (connectedClients > 0)
+                {
+                    _everHadClient = true;
+                }
+
+                if (Application.isBatchMode && shutdownIfNoClientConnectsAfterSeconds > 0f && !_everHadClient && _listeningStartTime >= 0f)
+                {
+                    var elapsed = Time.realtimeSinceStartup - _listeningStartTime;
+                    if (elapsed >= shutdownIfNoClientConnectsAfterSeconds)
+                    {
+                        Debug.Log($"[AutoShutdown] No clients connected for {elapsed:F0}s. Exiting headless server.");
+                        ShutdownServer();
+                        yield break;
+                    }
+                }
 
                 // In headless mode, the server itself is not counted as a "player"
                 // So we check if there are any clients connected
                 bool isEmpty = connectedClients == 0;
 
-                if (isEmpty)
+                if (isEmpty && (_matchEnded || (shutdownIfEmptyBeforeMatchEnd && _everHadClient)))
                 {
                     // Server is empty, start shutdown countdown if not already started
                     if (_shutdownCoroutine == null && !_isShuttingDown)
@@ -194,10 +346,27 @@ namespace BossFight2D.Systems
                 Debug.Log("[AutoShutdown] Application.Quit() called");
                 Application.Quit();
 
+                if (forceProcessExitInBatchMode)
+                {
+                    StartCoroutine(ForceProcessExitAfterDelay());
+                }
+
 #if UNITY_EDITOR
                 // In editor, stop play mode
                 UnityEditor.EditorApplication.isPlaying = false;
 #endif
+            }
+        }
+
+        private IEnumerator ForceProcessExitAfterDelay()
+        {
+            yield return new WaitForSeconds(forceProcessExitDelaySeconds);
+            try
+            {
+                System.Environment.Exit(0);
+            }
+            catch (Exception)
+            {
             }
         }
 

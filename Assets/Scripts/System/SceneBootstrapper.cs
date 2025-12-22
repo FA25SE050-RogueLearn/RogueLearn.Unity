@@ -128,15 +128,22 @@ public class SceneBootstrapper : MonoBehaviour
             // This supplements PlayerController's setup to cover any initialization race conditions.
             try
             {
-                var vcam = FindFirstObjectByType<Cinemachine.CinemachineVirtualCamera>();
-                if (vcam != null)
+                var camSetup = FindFirstObjectByType<BossFight2D.CameraSystem.MultiplayerCinemachineSetup>();
+                if (camSetup != null)
                 {
-                    // Choose the local owner player (if present)
-                    var ownedPlayer = GameObject.FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
-                        .FirstOrDefault(pc => pc.IsOwner);
-                    if (ownedPlayer != null)
+                    camSetup.RefreshLocalPlayer();
+                }
+                else
+                {
+                    var vcam = FindFirstObjectByType<Cinemachine.CinemachineVirtualCamera>();
+                    if (vcam != null)
                     {
-                        vcam.Follow = ownedPlayer.transform;
+                        var ownedPlayer = GameObject.FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
+                            .FirstOrDefault(pc => pc.IsOwner);
+                        if (ownedPlayer != null)
+                        {
+                            vcam.Follow = ownedPlayer.transform;
+                        }
                     }
                 }
             }

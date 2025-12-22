@@ -1,6 +1,8 @@
 using UnityEngine;
 using Unity.Netcode;
 using Cinemachine;
+using UnityEngine.SceneManagement;
+using System.Linq;
 
 namespace BossFight2D.CameraSystem
 {
@@ -28,9 +30,14 @@ namespace BossFight2D.CameraSystem
         [Header("Debug")]
         [SerializeField] private bool showDebugLogs = false;
 
+        [Header("Validation")]
+        [SerializeField] private float validationInterval = 0.5f;
+
         private Transform localPlayerTransform;
         private float lastSearchTime;
         private bool hasFoundLocalPlayer;
+        private float lastValidationTime;
+        private int lastPlayerCount = -1;
 
         void Awake()
         {
@@ -62,6 +69,57 @@ namespace BossFight2D.CameraSystem
                     lastSearchTime = Time.time;
                 }
             }
+
+            if (Time.time - lastValidationTime > validationInterval)
+            {
+                ValidateAndEnforce();
+                lastValidationTime = Time.time;
+            }
+        }
+
+        private void OnEnable()
+        {
+            SceneManager.sceneLoaded += OnSceneLoaded;
+
+            var nm = NetworkManager.Singleton;
+            if (nm != null)
+            {
+                nm.OnClientConnectedCallback += OnClientConnected;
+                nm.OnClientDisconnectCallback += OnClientDisconnected;
+            }
+        }
+
+        private void OnDisable()
+        {
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+
+            var nm = NetworkManager.Singleton;
+            if (nm != null)
+            {
+                nm.OnClientConnectedCallback -= OnClientConnected;
+                nm.OnClientDisconnectCallback -= OnClientDisconnected;
+            }
+        }
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            hasFoundLocalPlayer = false;
+            FindAndSetLocalPlayer();
+            ValidateAndEnforce();
+        }
+
+        private void OnClientConnected(ulong clientId)
+        {
+            hasFoundLocalPlayer = false;
+            FindAndSetLocalPlayer();
+            ValidateAndEnforce();
+        }
+
+        private void OnClientDisconnected(ulong clientId)
+        {
+            hasFoundLocalPlayer = false;
+            FindAndSetLocalPlayer();
+            ValidateAndEnforce();
         }
 
         /// <summary>
@@ -70,6 +128,18 @@ namespace BossFight2D.CameraSystem
         private void FindAndSetLocalPlayer()
         {
             GameObject[] players = GameObject.FindGameObjectsWithTag(playerTag);
+
+            var ownedPlayers = players
+                .Select(p => new { go = p, no = p != null ? p.GetComponent<NetworkObject>() : null })
+                .Where(x => x.go != null)
+                .Where(x => x.no == null || x.no.IsOwner)
+                .Select(x => x.go)
+                .ToList();
+
+            if (ownedPlayers.Count > 1)
+            {
+                Debug.LogError($"[MultiplayerCinemachine] Multiple owned players detected ({ownedPlayers.Count}). Camera will follow the first one.");
+            }
 
             foreach (GameObject playerObj in players)
             {
@@ -112,8 +182,197 @@ namespace BossFight2D.CameraSystem
             localPlayerTransform = target;
             hasFoundLocalPlayer = true;
 
+            EnsureCameraRigIsValid();
+            DisableRemotePlayerCameras();
+
             if (showDebugLogs)
                 Debug.Log($"[Cinemachine] Virtual camera now following: {target.name}");
+        }
+
+        public void EnsureForLocalPlayer(Transform localPlayer)
+        {
+            if (localPlayer == null) return;
+            SetFollowTarget(localPlayer);
+            ValidateAndEnforce();
+        }
+
+        private void ValidateAndEnforce()
+        {
+            int playerCount = 0;
+            try
+            {
+                playerCount = GameObject.FindGameObjectsWithTag(playerTag)?.Length ?? 0;
+            }
+            catch
+            {
+                playerCount = 0;
+            }
+
+            if (playerCount != lastPlayerCount)
+            {
+                lastPlayerCount = playerCount;
+                if (playerCount > 1)
+                {
+                    Debug.Log($"[MultiplayerCinemachine] Detected {playerCount} players in scene.");
+                }
+            }
+
+            EnsureCameraRigIsValid();
+            DisableRemotePlayerCameras();
+            DisableNonManagedVirtualCameras();
+            EnsureLocalPlayerHasFollowTarget();
+            EnsureOnlyOneMainCameraTaggedEnabled();
+
+            if (virtualCamera != null && virtualCamera.enabled)
+            {
+                if (virtualCamera.Follow == null)
+                {
+                    Debug.LogError("[MultiplayerCinemachine] Active virtual camera has no Follow target.");
+                }
+            }
+        }
+
+        private void EnsureCameraRigIsValid()
+        {
+            if (virtualCamera == null) return;
+
+            var mainCam = Camera.main;
+            if (mainCam != null)
+            {
+                var brain = mainCam.GetComponent<CinemachineBrain>();
+                if (brain == null)
+                {
+                    try { mainCam.gameObject.AddComponent<CinemachineBrain>(); }
+                    catch { }
+                }
+            }
+
+            var brains = FindObjectsOfType<CinemachineBrain>(true);
+            if (brains != null && brains.Length > 1)
+            {
+                var mainBrain = mainCam != null ? mainCam.GetComponent<CinemachineBrain>() : null;
+                foreach (var b in brains)
+                {
+                    if (b == null) continue;
+                    if (mainBrain != null && b == mainBrain) continue;
+                    if (b.enabled)
+                    {
+                        b.enabled = false;
+                    }
+                }
+            }
+        }
+
+        private void EnsureLocalPlayerHasFollowTarget()
+        {
+            if (virtualCamera == null) return;
+            if (virtualCamera.Follow != null) return;
+
+            hasFoundLocalPlayer = false;
+            FindAndSetLocalPlayer();
+            if (virtualCamera.Follow == null)
+            {
+                Debug.LogError("[MultiplayerCinemachine] Local player has no assigned follow target.");
+            }
+        }
+
+        private void DisableRemotePlayerCameras()
+        {
+            GameObject[] players;
+            try { players = GameObject.FindGameObjectsWithTag(playerTag); }
+            catch { return; }
+
+            foreach (var playerObj in players)
+            {
+                if (playerObj == null) continue;
+                var netObj = playerObj.GetComponent<NetworkObject>();
+                if (netObj != null && !netObj.IsOwner)
+                {
+                    DisableCameraComponents(playerObj);
+
+                    var anyEnabledCamera = playerObj.GetComponentsInChildren<Camera>(true).Any(c => c != null && c.enabled);
+                    var anyEnabledVcam = playerObj.GetComponentsInChildren<CinemachineVirtualCamera>(true).Any(v => v != null && v.enabled);
+                    if (anyEnabledCamera || anyEnabledVcam)
+                    {
+                        Debug.LogError($"[MultiplayerCinemachine] Remote player '{playerObj.name}' still has an enabled camera component after enforcement.");
+                    }
+                }
+            }
+        }
+
+        private static void DisableCameraComponents(GameObject root)
+        {
+            var cams = root.GetComponentsInChildren<Camera>(true);
+            foreach (var c in cams)
+            {
+                if (c != null && c.enabled) c.enabled = false;
+            }
+
+            var listeners = root.GetComponentsInChildren<AudioListener>(true);
+            foreach (var l in listeners)
+            {
+                if (l != null && l.enabled) l.enabled = false;
+            }
+
+            var vcams = root.GetComponentsInChildren<CinemachineVirtualCamera>(true);
+            foreach (var v in vcams)
+            {
+                if (v != null && v.enabled) v.enabled = false;
+            }
+
+            var brains = root.GetComponentsInChildren<CinemachineBrain>(true);
+            foreach (var b in brains)
+            {
+                if (b != null && b.enabled) b.enabled = false;
+            }
+        }
+
+        private void DisableNonManagedVirtualCameras()
+        {
+            if (virtualCamera == null) return;
+
+            var vcams = FindObjectsOfType<CinemachineVirtualCamera>(true);
+            foreach (var v in vcams)
+            {
+                if (v == null) continue;
+                if (v == virtualCamera) continue;
+                if (v.enabled)
+                {
+                    v.enabled = false;
+                }
+            }
+
+            if (!virtualCamera.enabled)
+            {
+                virtualCamera.enabled = true;
+            }
+        }
+
+        private void EnsureOnlyOneMainCameraTaggedEnabled()
+        {
+            Camera[] cams;
+            try { cams = FindObjectsOfType<Camera>(true); }
+            catch { return; }
+
+            var mainTaggedEnabled = cams
+                .Where(c => c != null && c.enabled && c.CompareTag("MainCamera"))
+                .ToList();
+
+            if (mainTaggedEnabled.Count <= 1) return;
+
+            var keep = Camera.main != null && Camera.main.enabled ? Camera.main : mainTaggedEnabled[0];
+            foreach (var c in mainTaggedEnabled)
+            {
+                if (c == null) continue;
+                if (c == keep) continue;
+                c.enabled = false;
+                var listener = c.GetComponent<AudioListener>();
+                if (listener != null) listener.enabled = false;
+                var brain = c.GetComponent<CinemachineBrain>();
+                if (brain != null) brain.enabled = false;
+            }
+
+            Debug.LogError($"[MultiplayerCinemachine] Multiple enabled MainCamera-tag cameras detected ({mainTaggedEnabled.Count}). Disabled extras.");
         }
 
         #region Public Methods
@@ -158,6 +417,7 @@ namespace BossFight2D.CameraSystem
         {
             hasFoundLocalPlayer = false;
             FindAndSetLocalPlayer();
+            ValidateAndEnforce();
         }
 
         /// <summary>

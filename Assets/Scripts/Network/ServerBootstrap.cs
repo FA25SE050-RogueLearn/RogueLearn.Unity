@@ -129,6 +129,11 @@ namespace BossFight2D.Network
                             autoStartGo.AddComponent<BossFight2D.Network.ServerAutoStartOnReady>();
                             Debug.Log("[ServerBootstrap] ServerAutoStartOnReady initialized.");
 
+                            var shutdownGo = new GameObject("AutoShutdownManager");
+                            GameObject.DontDestroyOnLoad(shutdownGo);
+                            shutdownGo.AddComponent<BossFight2D.Systems.AutoShutdownManager>();
+                            Debug.Log("[ServerBootstrap] AutoShutdownManager initialized.");
+
                             // Find scene-authored LobbyStateManager (NetworkObject) and publish join code.
                             // Avoid runtime-spawned NetworkObject to prevent prefab registration errors on clients.
                             var lobby = GameObject.FindObjectOfType<LobbyStateManager>();

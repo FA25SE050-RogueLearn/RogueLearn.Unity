@@ -56,6 +56,10 @@ namespace BossFight2D.Player
                 // Re-apply camera follow whenever a new scene loads on the client
                 UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
             }
+              else
+            {
+                DisableLocalCameraComponents();
+            }
 
             networkFlipX.OnValueChanged += OnFlipXChanged;
             networkSpeed.OnValueChanged += OnSpeedChanged;
@@ -146,6 +150,14 @@ namespace BossFight2D.Player
 
         private void SetupCameraFollow()
         {
+            var setup = FindFirstObjectByType<BossFight2D.CameraSystem.MultiplayerCinemachineSetup>();
+            if (setup != null)
+            {
+                setup.EnsureForLocalPlayer(transform);
+                _directCameraFollow = false;
+                return;
+            }
+
             // Ensure a Cinemachine Brain exists on the main camera so the vcam can drive it.
             var mainCam = Camera.main;
             if (mainCam != null)
@@ -171,6 +183,33 @@ namespace BossFight2D.Player
                 // If no Cinemachine vcam is present, enable simple direct follow as a fallback.
                 _directCameraFollow = true;
                 Debug.LogWarning("[PlayerController] No CinemachineVirtualCamera found. Using direct camera follow fallback for local player.");
+            }
+        }
+
+        private void DisableLocalCameraComponents()
+        {
+            var cams = GetComponentsInChildren<Camera>(true);
+            foreach (var c in cams)
+            {
+                if (c != null && c.enabled) c.enabled = false;
+            }
+
+            var listeners = GetComponentsInChildren<AudioListener>(true);
+            foreach (var l in listeners)
+            {
+                if (l != null && l.enabled) l.enabled = false;
+            }
+
+            var vcams = GetComponentsInChildren<CinemachineVirtualCamera>(true);
+            foreach (var v in vcams)
+            {
+                if (v != null && v.enabled) v.enabled = false;
+            }
+
+            var brains = GetComponentsInChildren<CinemachineBrain>(true);
+            foreach (var b in brains)
+            {
+                if (b != null && b.enabled) b.enabled = false;
             }
         }
 

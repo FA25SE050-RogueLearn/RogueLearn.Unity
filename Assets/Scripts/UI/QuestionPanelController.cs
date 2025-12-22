@@ -14,6 +14,7 @@ namespace BossFight2D.UI
         public static QuestionPanelController Instance { get; private set; }
         [Header("UI References")]
         [SerializeField] private TextMeshProUGUI questionText;
+        [SerializeField] private ScrollRect questionScrollRect;
         [SerializeField] private Button answerA;
         [SerializeField] private Button answerB;
         [SerializeField] private Button answerC;
@@ -38,6 +39,12 @@ namespace BossFight2D.UI
         [SerializeField] private Color correctFlashColor = new Color(0.2f, 0.9f, 0.2f);
         [SerializeField] private Color incorrectFlashColor = new Color(0.9f, 0.25f, 0.25f);
         [SerializeField] private float flashDuration = 0.35f;
+
+        [Header("Answer SFX")]
+        [SerializeField] private AudioSource answerAudioSource;
+        [SerializeField] private AudioClip correctAnswerClip;
+        [SerializeField] private AudioClip incorrectAnswerClip;
+        [Range(0f, 1f)][SerializeField] private float answerSfxVolume = 0.8f;
 
         private bool isActive = false;
         [Header("Transitions & Debug")]
@@ -69,6 +76,16 @@ namespace BossFight2D.UI
                 Instance = this;
             }
 
+            if (answerAudioSource == null && (correctAnswerClip != null || incorrectAnswerClip != null))
+            {
+                answerAudioSource = GetComponent<AudioSource>();
+                if (answerAudioSource == null)
+                {
+                    answerAudioSource = gameObject.AddComponent<AudioSource>();
+                }
+                answerAudioSource.playOnAwake = false;
+            }
+
             // Prefer an explicitly named child for the question prompt
             if (questionText == null)
             {
@@ -86,6 +103,15 @@ namespace BossFight2D.UI
                 if (questionText == null)
                 {
                     questionText = GetComponentInChildren<TextMeshProUGUI>();
+                }
+            }
+
+            if (questionScrollRect == null)
+            {
+                questionScrollRect = questionText != null ? questionText.GetComponentInParent<ScrollRect>() : null;
+                if (questionScrollRect == null)
+                {
+                    questionScrollRect = GetComponentInChildren<ScrollRect>(true);
                 }
             }
 
@@ -208,6 +234,8 @@ namespace BossFight2D.UI
             if (questionText != null)
                 questionText.text = question.prompt;
 
+            ResetQuestionScroll();
+
             // Populate answer options
             if (question.options != null && question.options.Length >= 4)
             {
@@ -231,10 +259,36 @@ namespace BossFight2D.UI
             ResetAnswerVisibilityAndColors();
         }
 
+        private void ResetQuestionScroll()
+        {
+            if (questionScrollRect == null)
+            {
+                questionScrollRect = questionText != null ? questionText.GetComponentInParent<ScrollRect>() : null;
+                if (questionScrollRect == null)
+                {
+                    questionScrollRect = GetComponentInChildren<ScrollRect>(true);
+                }
+            }
+
+            if (questionScrollRect == null) return;
+            Canvas.ForceUpdateCanvases();
+            questionScrollRect.StopMovement();
+            questionScrollRect.verticalNormalizedPosition = 1f;
+        }
+
         public void ShowResolution(int selectedIndex, bool isCorrect, int correctIndex)
         {
             isActive = false;
             SetButtonsInteractable(false);
+
+            if (answerAudioSource != null)
+            {
+                var clip = isCorrect ? correctAnswerClip : incorrectAnswerClip;
+                if (clip != null)
+                {
+                    answerAudioSource.PlayOneShot(clip, answerSfxVolume);
+                }
+            }
 
             // Notify HUD of question answer
             EventBus.RaiseQuestionAnswered(isCorrect);

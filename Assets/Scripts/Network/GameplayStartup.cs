@@ -224,14 +224,22 @@ namespace BossFight2D.Network
             // Force the Cinemachine camera (if present) to follow the owned player
             try
             {
-                var vcam = FindFirstObjectByType<CinemachineVirtualCamera>();
-                if (vcam != null)
+                var camSetup = FindFirstObjectByType<BossFight2D.CameraSystem.MultiplayerCinemachineSetup>();
+                if (camSetup != null)
                 {
-                    vcam.Follow = localController.transform;
+                    camSetup.EnsureForLocalPlayer(localController.transform);
                 }
                 else
                 {
-                    Debug.LogWarning("[GameplayStartup] CinemachineVirtualCamera not found when ensuring follow target.");
+                    var vcam = FindFirstObjectByType<CinemachineVirtualCamera>();
+                    if (vcam != null)
+                    {
+                        vcam.Follow = localController.transform;
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[GameplayStartup] CinemachineVirtualCamera not found when ensuring follow target.");
+                    }
                 }
             }
             catch (System.Exception ex)

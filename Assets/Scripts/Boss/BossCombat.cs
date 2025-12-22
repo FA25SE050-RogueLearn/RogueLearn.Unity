@@ -7,6 +7,7 @@ using BossFight2D.Core;
 using BossFight2D.Effects;
 using BossFight2D.Quiz;
 using Unity.Netcode.Components;
+using System.Collections.Generic;
 using UnityEngine.Scripting;
 
 namespace BossFight2D.Boss
@@ -123,6 +124,11 @@ namespace BossFight2D.Boss
         GameManager gm;
         bool _gameEnded;
 
+        bool _hitboxDefaultDedupeByDamageable;
+        bool _hitboxDefaultApplyDamageOnDeactivate;
+        bool _hitboxDefaultSplitTotalDamageAcrossTargets;
+        bool _hitboxDefaultRestrictToOwnerClientIds;
+
         int _queuedDamage = 1;
 
         void Awake()
@@ -138,6 +144,11 @@ namespace BossFight2D.Boss
             {
                 _hitboxDefaultLocalRotation = hitbox.transform.localRotation;
                 _hitboxDefaultLocalPosition = hitbox.transform.localPosition;
+
+                _hitboxDefaultDedupeByDamageable = hitbox.dedupeByDamageable;
+                _hitboxDefaultApplyDamageOnDeactivate = hitbox.applyDamageOnDeactivate;
+                _hitboxDefaultSplitTotalDamageAcrossTargets = hitbox.splitTotalDamageAcrossTargets;
+                _hitboxDefaultRestrictToOwnerClientIds = hitbox.restrictToOwnerClientIds;
             }
             rb = GetComponent<Rigidbody2D>();
             var nt = GetComponent<NetworkTransform>();
@@ -272,15 +283,35 @@ namespace BossFight2D.Boss
             // Spawn telegraph indicator at predicted hit location
             if (showTelegraph)
             {
+                var teleW = _isPunishAttack ? windup * punishWindupMultiplier : windup;
                 if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
                 {
-                    ShowTelegraphClientRpc(windup);
+                    ShowTelegraphClientRpc(teleW);
                 }
                 else
                 {
-                    ShowTelegraph(windup);
+                    ShowTelegraph(teleW);
                 }
             }
+        }
+
+        public void QueuePunishAttack(int totalDamageBudget, IEnumerable<ulong> affectedClientIds)
+        {
+            if (_gameEnded) return;
+            if (Time.time < _nextAttackAllowed) return;
+
+            _isPunishAttack = true;
+
+            if (hitbox != null)
+            {
+                hitbox.dedupeByDamageable = true;
+                hitbox.applyDamageOnDeactivate = true;
+                hitbox.splitTotalDamageAcrossTargets = true;
+                hitbox.restrictToOwnerClientIds = true;
+                hitbox.SetAllowedOwnerClientIds(affectedClientIds);
+            }
+
+            QueueAttack(Mathf.Max(0, totalDamageBudget));
         }
 
         /// <summary>
@@ -356,6 +387,15 @@ namespace BossFight2D.Boss
                 var cd = punishAttackCooldownSeconds;
                 _nextAttackAllowed = Time.time + cd;
                 _isPunishAttack = false;
+
+                if (hitbox != null)
+                {
+                    hitbox.dedupeByDamageable = _hitboxDefaultDedupeByDamageable;
+                    hitbox.applyDamageOnDeactivate = _hitboxDefaultApplyDamageOnDeactivate;
+                    hitbox.splitTotalDamageAcrossTargets = _hitboxDefaultSplitTotalDamageAcrossTargets;
+                    hitbox.restrictToOwnerClientIds = _hitboxDefaultRestrictToOwnerClientIds;
+                    hitbox.SetAllowedOwnerClientIds(null);
+                }
             }
             ResetPrediction();
         }
@@ -364,12 +404,20 @@ namespace BossFight2D.Boss
         /// Triggers the hitbox activation at the start of the animation.
         /// </summary>
         [Preserve]
-        public void AnimationEvent_HitboxStart() { BeginHitbox(); }
+        public void AnimationEvent_HitboxStart()
+        {
+            if (!useAnimationEvents) return;
+            BeginHitbox();
+        }
         /// <summary>
         /// Triggers the hitbox deactivation at the end of the animation.
         /// </summary>  
         [Preserve]
-        public void AnimationEvent_HitboxEnd() { EndHitbox(); }
+        public void AnimationEvent_HitboxEnd()
+        {
+            if (!useAnimationEvents) return;
+            EndHitbox();
+        }
 
         /// <summary>
         /// Creates a telegraph instance at the predicted hit position/rotation and scales it to the collider size.

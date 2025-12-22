@@ -7,6 +7,7 @@ using BossFight2D.UI;
 using BossFight2D.Systems;
 using BossFight2D.Combat;
 using BossFight2D.Boss;
+using BossFight2D.Network;
 using System.IO;
 
 namespace BossFight2D.Quiz
@@ -42,6 +43,7 @@ namespace BossFight2D.Quiz
         private Dictionary<ulong, bool> playerReadyStatus = new Dictionary<ulong, bool>();
         private Dictionary<ulong, int> playerAnswers = new Dictionary<ulong, int>();
         private bool punishTriggered = false;
+        private HashSet<ulong> wrongAnswerPlayers = new HashSet<ulong>();
         [System.Serializable]
         public class TopicSummaryData { public string topic; public int total; public int correct; }
         [System.Serializable]
@@ -49,6 +51,7 @@ namespace BossFight2D.Quiz
         [Header("Ready Flow")]
         [SerializeField] private bool continuousReadyFlow = true; // If true, keep players ready between rounds while they remain in the station
         [SerializeField] private float interRoundDelaySeconds = 2f; // Pause between rounds before starting next question automatically
+        [SerializeField] private float wrongAnswerInterRoundDelaySeconds = 1.0f;
         private float nextQuestionAllowedAt = 0f; // Time gate to avoid instant restart
 
         [Header("Backend Pack Gating")]
@@ -67,8 +70,34 @@ namespace BossFight2D.Quiz
         private Dictionary<ulong, bool> playerDecisionAttack = new Dictionary<ulong, bool>();
         public NetworkVariable<float> DecisionRemaining = new NetworkVariable<float>(0f);
 
-        // MVP: Track ejected players who need to re-ready before rejoining
+        [Header("Wrong Answer Penalty")]
+        [SerializeField] private bool applyWrongAnswerHealthPenalty = true;
+        [SerializeField] private bool usePercentWrongAnswerPenalty = true;
+        [Range(0f, 1f)][SerializeField] private float wrongAnswerPenaltyPercent = 0.1f;
+        [SerializeField] private int wrongAnswerPenaltyHearts = 1;
+        [SerializeField] private bool applyPenaltyOnNoAnswer = false;
+
+        [Header("Wrong Answer Ejection")]
+        [SerializeField] private bool ejectPlayersOnWrongAnswer = false;
         private HashSet<ulong> ejectedPlayers = new HashSet<ulong>();
+
+        [Header("Reconnect")]
+        [SerializeField] private bool enableReconnectGrace = true;
+        [SerializeField] private float reconnectGraceSeconds = 15f;
+
+        private class ReconnectSnapshot
+        {
+            public ulong OldClientId;
+            public bool WasReady;
+            public bool WasEjected;
+            public int Streak;
+            public bool HadAnswer;
+            public int Answer;
+            public bool QuestionParticipant;
+            public float ExpiresAt;
+        }
+
+        private readonly Dictionary<string, ReconnectSnapshot> reconnectSnapshotsByUserId = new Dictionary<string, ReconnectSnapshot>();
 
         public enum DecisionRule { AnyAttack, MajorityAttack }
 
@@ -123,6 +152,7 @@ namespace BossFight2D.Quiz
             {
                 NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
                 NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
+                PlayerIdentity.UserIdRegistered += HandleUserIdRegistered;
 
                 foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
                 {
@@ -256,6 +286,8 @@ namespace BossFight2D.Quiz
         {
             if (!IsServer) return;
 
+            PurgeExpiredReconnectSnapshots();
+
             if (State.Value == QuizState.Question)
             {
                 // Pause the question timer during Power Play to avoid unfair timeouts
@@ -300,6 +332,7 @@ namespace BossFight2D.Quiz
             {
                 NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
                 NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
+                PlayerIdentity.UserIdRegistered -= HandleUserIdRegistered;
             }
             State.OnValueChanged -= OnStateChanged;
             EventBus.GameWon -= OnGameEnded;
@@ -331,16 +364,130 @@ namespace BossFight2D.Quiz
             ReadyCount.Value = GetReadyPlayableClients();
         }
 
+        private void HandleUserIdRegistered(ulong clientId, string userId)
+        {
+            if (!IsServer) return;
+            if (!enableReconnectGrace) return;
+            if (string.IsNullOrEmpty(userId)) return;
+
+            if (!reconnectSnapshotsByUserId.TryGetValue(userId, out var snap))
+            {
+                return;
+            }
+
+            if (Time.time > snap.ExpiresAt)
+            {
+                reconnectSnapshotsByUserId.Remove(userId);
+                return;
+            }
+
+            reconnectSnapshotsByUserId.Remove(userId);
+
+            playerReadyStatus[clientId] = snap.WasReady;
+            correctAnswerStreak[clientId] = snap.Streak;
+
+            if (snap.WasEjected)
+            {
+                ejectedPlayers.Add(clientId);
+            }
+
+            if (snap.HadAnswer)
+            {
+                playerAnswers[clientId] = snap.Answer;
+            }
+
+            TotalPlayers.Value = GetTotalPlayableClients();
+            ReadyCount.Value = GetReadyPlayableClients();
+
+            if (State.Value == QuizState.Question && snap.WasReady)
+            {
+                var payload = BuildCurrentQuestionPayload();
+                var targets = new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { clientId } } };
+                ShowQuestionClientRpc(payload, targets);
+
+                if (snap.HadAnswer)
+                {
+                    var question = questions[currentQuestionIndex.Value];
+                    int correctIndex = question.correctIndex;
+                    bool isCorrect = snap.Answer == correctIndex;
+                    AnswerResolutionClientRpc(snap.Answer, isCorrect, correctIndex, targets);
+                }
+            }
+
+            if (State.Value == QuizState.Decision && !ejectedPlayers.Contains(clientId))
+            {
+                var remaining = Mathf.Max(0f, DecisionRemaining.Value);
+                var targets = new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { clientId } } };
+                ShowDecisionClientRpc(remaining, (int)decisionRule, targets);
+            }
+
+            if (State.Value == QuizState.Question && snap.QuestionParticipant)
+            {
+                CheckAllAnswersSubmitted();
+            }
+        }
+
         private void HandleClientDisconnected(ulong clientId)
         {
             if (!IsServer) return;
+
+            if (enableReconnectGrace)
+            {
+                var userId = PlayerIdentity.GetUserIdForClient(clientId);
+                if (!string.IsNullOrEmpty(userId))
+                {
+                    bool wasReady = playerReadyStatus.TryGetValue(clientId, out var r) && r;
+                    bool hadAnswer = playerAnswers.TryGetValue(clientId, out var ans);
+                    int streak = 0;
+                    correctAnswerStreak.TryGetValue(clientId, out streak);
+                    bool wasEjected = ejectedPlayers.Contains(clientId);
+                    bool questionParticipant = State.Value == QuizState.Question && wasReady;
+
+                    reconnectSnapshotsByUserId[userId] = new ReconnectSnapshot
+                    {
+                        OldClientId = clientId,
+                        WasReady = wasReady,
+                        WasEjected = wasEjected,
+                        Streak = streak,
+                        HadAnswer = hadAnswer,
+                        Answer = ans,
+                        QuestionParticipant = questionParticipant,
+                        ExpiresAt = Time.time + Mathf.Max(0f, reconnectGraceSeconds)
+                    };
+                }
+            }
+
             playerReadyStatus.Remove(clientId);
             playerAnswers.Remove(clientId);
             correctAnswerStreak.Remove(clientId);
+            ejectedPlayers.Remove(clientId);
             // Update counts for client-side UI
             TotalPlayers.Value = GetTotalPlayableClients();
             ReadyCount.Value = GetReadyPlayableClients();
             if (State.Value == QuizState.Question)
+            {
+                CheckAllAnswersSubmitted();
+            }
+        }
+
+        private void PurgeExpiredReconnectSnapshots()
+        {
+            if (!enableReconnectGrace) return;
+            if (reconnectSnapshotsByUserId.Count == 0) return;
+
+            bool removedAny = false;
+            var now = Time.time;
+            var keys = new List<string>(reconnectSnapshotsByUserId.Keys);
+            foreach (var key in keys)
+            {
+                if (now > reconnectSnapshotsByUserId[key].ExpiresAt)
+                {
+                    reconnectSnapshotsByUserId.Remove(key);
+                    removedAny = true;
+                }
+            }
+
+            if (removedAny && State.Value == QuizState.Question)
             {
                 CheckAllAnswersSubmitted();
             }
@@ -448,6 +595,7 @@ namespace BossFight2D.Quiz
 
             playerAnswers.Clear();
             punishTriggered = false;
+            wrongAnswerPlayers.Clear();
             State.Value = QuizState.Question;
             currentQuestionIndex.Value = (currentQuestionIndex.Value + 1) % questions.Count;
 
@@ -514,7 +662,8 @@ namespace BossFight2D.Quiz
                 yield return null;
             }
             // After Power Play ends (or timeout), try to show
-            ShowQuestionClientRpc(payload);
+            if (State.Value == QuizState.Question)
+                ShowQuestionClientRpc(payload);
         }
 
         private QuestionPayload BuildCurrentQuestionPayload()
@@ -570,13 +719,25 @@ namespace BossFight2D.Quiz
             {
                 CombatResolver.ApplyAnswerDamage(question, this);
             }
-            else if (!punishTriggered)
+            else
             {
-                // Trigger wrong-answer punish flow once per question
+                wrongAnswerPlayers.Add(playerId);
                 var boss = Object.FindFirstObjectByType<BossStateMachine>();
                 if (boss != null)
                 {
-                    boss.OnWrongAnswer();
+                    if (!punishTriggered)
+                    {
+                        boss.BeginWrongAnswerChallenge();
+                    }
+                    boss.RegisterWrongAnswer(playerId);
+                }
+                else if (!punishTriggered)
+                {
+                    var fallbackBoss = Object.FindFirstObjectByType<BossStateMachine>();
+                    if (fallbackBoss != null)
+                    {
+                        fallbackBoss.OnWrongAnswer();
+                    }
                 }
                 punishTriggered = true;
             }
@@ -600,6 +761,27 @@ namespace BossFight2D.Quiz
                 // Exclude the server/host client in headless mode
                 requiredCount = Mathf.Max(0, requiredCount - 1);
             }
+
+            if (enableReconnectGrace && State.Value == QuizState.Question)
+            {
+                int extraRequired = 0;
+                int extraAnswered = 0;
+                var now = Time.time;
+                foreach (var snap in reconnectSnapshotsByUserId.Values)
+                {
+                    if (!snap.QuestionParticipant) continue;
+                    if (now > snap.ExpiresAt) continue;
+                    extraRequired++;
+                    if (snap.HadAnswer) extraAnswered++;
+                }
+
+                if ((playerAnswers.Count + extraAnswered) >= (requiredCount + extraRequired))
+                {
+                    ResolveAnswers();
+                }
+                return;
+            }
+
             if (playerAnswers.Count >= requiredCount)
             {
                 ResolveAnswers();
@@ -642,6 +824,9 @@ namespace BossFight2D.Quiz
             State.Value = QuizState.Resolution;
             QuestionData question = questions[currentQuestionIndex.Value];
 
+            var boss = Object.FindFirstObjectByType<BossStateMachine>();
+            var useBossPunish = (boss != null && boss.combat != null);
+
             if (Application.isBatchMode)
             {
                 EventBus.RaiseAnswerResolved();
@@ -651,6 +836,10 @@ namespace BossFight2D.Quiz
 
             foreach (var client in NetworkManager.Singleton.ConnectedClients.Values)
             {
+                if (ExcludeServerFromPlayerCounts && client.ClientId == NetworkManager.ServerClientId)
+                {
+                    continue;
+                }
                 bool isCorrect = playerAnswers.ContainsKey(client.ClientId) && playerAnswers[client.ClientId] == question.correctIndex;
                 if (isCorrect)
                 {
@@ -670,6 +859,29 @@ namespace BossFight2D.Quiz
                 }
                 else
                 {
+                    if (applyWrongAnswerHealthPenalty)
+                    {
+                        var answered = playerAnswers.ContainsKey(client.ClientId);
+                        var shouldApplyPenalty = !useBossPunish
+                            ? (answered || applyPenaltyOnNoAnswer)
+                            : (!answered && applyPenaltyOnNoAnswer);
+
+                        if (shouldApplyPenalty)
+                        {
+                            var playerHealth = client.PlayerObject != null
+                                ? client.PlayerObject.GetComponent<BossFight2D.Player.PlayerHealth>()
+                                : null;
+                            if (playerHealth != null)
+                            {
+                                var penaltyHearts = ComputeWrongAnswerPenaltyHearts(playerHealth);
+                                if (penaltyHearts > 0)
+                                {
+                                    playerHealth.TakeDamage(penaltyHearts);
+                                }
+                            }
+                        }
+                    }
+
                     // Break the streak on incorrect or no answer
                     correctAnswerStreak[client.ClientId] = 0;
                 }
@@ -684,16 +896,30 @@ namespace BossFight2D.Quiz
                 }
             }
 
-            // MVP: Eject wrong-answer players AFTER resolution (synchronized)
-            // This ensures all players see resolution feedback before ejection
-            EjectWrongAnswerPlayers(question);
+            if (ejectPlayersOnWrongAnswer)
+            {
+                EjectWrongAnswerPlayers(question);
+            }
 
             bool anyCorrect = false;
+            bool anyIncorrect = false;
             foreach (var client in NetworkManager.Singleton.ConnectedClients.Values)
             {
-                if (playerAnswers.ContainsKey(client.ClientId) && playerAnswers[client.ClientId] == question.correctIndex)
+                if (ExcludeServerFromPlayerCounts && client.ClientId == NetworkManager.ServerClientId)
+                {
+                    continue;
+                }
+
+                var answered = playerAnswers.ContainsKey(client.ClientId);
+                var isCorrect = answered && playerAnswers[client.ClientId] == question.correctIndex;
+                if (isCorrect)
                 {
                     anyCorrect = true; break;
+                }
+
+                if (answered || applyPenaltyOnNoAnswer)
+                {
+                    anyIncorrect = true;
                 }
             }
             if (anyCorrect)
@@ -705,8 +931,14 @@ namespace BossFight2D.Quiz
                 }
                 else
                 {
-                    // No power play - start decision phase as normal
-                    StartDecisionPhase(powerPlayPlayerId);
+                    if (anyIncorrect && wrongAnswerInterRoundDelaySeconds > 0f)
+                    {
+                        StartCoroutine(StartDecisionPhaseAfterDelay(wrongAnswerInterRoundDelaySeconds, powerPlayPlayerId));
+                    }
+                    else
+                    {
+                        StartDecisionPhase(powerPlayPlayerId);
+                    }
                 }
 
             }
@@ -715,10 +947,23 @@ namespace BossFight2D.Quiz
                 ResetForNextRound();
                 if (continuousReadyFlow)
                 {
-                    nextQuestionAllowedAt = Time.time + 0.5f;
+                    nextQuestionAllowedAt = Time.time + wrongAnswerInterRoundDelaySeconds;
                 }
-                StartCoroutine(StartNextQuestionAfterDelay(0.5f));
+                StartCoroutine(StartNextQuestionAfterDelay(wrongAnswerInterRoundDelaySeconds));
             }
+        }
+
+        private int ComputeWrongAnswerPenaltyHearts(BossFight2D.Player.PlayerHealth playerHealth)
+        {
+            if (playerHealth == null) return 0;
+            var max = Mathf.Max(1, playerHealth.maxHearts.Value);
+            if (usePercentWrongAnswerPenalty)
+            {
+                var pct = Mathf.Clamp01(wrongAnswerPenaltyPercent);
+                var raw = Mathf.CeilToInt(max * pct);
+                return Mathf.Clamp(raw, 0, max);
+            }
+            return Mathf.Clamp(wrongAnswerPenaltyHearts, 0, max);
         }
 
         private void StartDecisionPhase(ulong? candidate)
@@ -896,6 +1141,17 @@ namespace BossFight2D.Quiz
             if (IsServer && State.Value == QuizState.Idle) StartQuiz();
         }
 
+        private System.Collections.IEnumerator StartDecisionPhaseAfterDelay(float seconds, ulong? candidate)
+        {
+            float t = seconds;
+            while (t > 0f)
+            {
+                t -= Time.deltaTime;
+                yield return null;
+            }
+            if (IsServer && State.Value == QuizState.Resolution) StartDecisionPhase(candidate);
+        }
+
         [ClientRpc]
         private void AnswerResolutionClientRpc(int selectedIndex, bool isCorrect, int correctIndex, ClientRpcParams clientRpcParams = default)
         {
@@ -922,6 +1178,7 @@ namespace BossFight2D.Quiz
             // Guard: only accept during the question phase
             if (State.Value != QuizState.Question) return;
             var senderId = rpcParams.Receive.SenderClientId;
+            if (playerAnswers.ContainsKey(senderId)) return;
             SubmitAnswer(senderId, answerIndex);
         }
 
