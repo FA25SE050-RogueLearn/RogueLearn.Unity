@@ -124,6 +124,27 @@ namespace BossFight2D.Quiz
             return playerReadyStatus.Values.Count(v => v);
         }
 
+        internal static int CalculateRequiredAnswerCount(
+            IEnumerable<ulong> connectedClientIds,
+            Dictionary<ulong, bool> readyStatus,
+            HashSet<ulong> ejectedClientIds,
+            bool excludeServerFromPlayerCounts,
+            ulong serverClientId)
+        {
+            if (connectedClientIds == null) return 0;
+            if (readyStatus == null) return 0;
+
+            var count = 0;
+            foreach (var id in connectedClientIds)
+            {
+                if (excludeServerFromPlayerCounts && id == serverClientId) continue;
+                if (ejectedClientIds != null && ejectedClientIds.Contains(id)) continue;
+                if (!readyStatus.TryGetValue(id, out var isReady) || !isReady) continue;
+                count++;
+            }
+            return count;
+        }
+
         private void Awake()
         {
             if (Instance != null && Instance != this)
@@ -441,7 +462,7 @@ namespace BossFight2D.Quiz
                     int streak = 0;
                     correctAnswerStreak.TryGetValue(clientId, out streak);
                     bool wasEjected = ejectedPlayers.Contains(clientId);
-                    bool questionParticipant = State.Value == QuizState.Question && wasReady;
+                    bool questionParticipant = State.Value == QuizState.Question && wasReady && !wasEjected;
 
                     reconnectSnapshotsByUserId[userId] = new ReconnectSnapshot
                     {
@@ -524,11 +545,20 @@ namespace BossFight2D.Quiz
             {
                 CheckAllPlayersReady();
             }
-            else if (State.Value == QuizState.Question && isReady)
+            else if (State.Value == QuizState.Question)
             {
-                var payload = BuildCurrentQuestionPayload();
                 var targets = new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { clientId } } };
-                ShowQuestionClientRpc(payload, targets);
+                if (isReady)
+                {
+                    var payload = BuildCurrentQuestionPayload();
+                    ShowQuestionClientRpc(payload, targets);
+                }
+                else
+                {
+                    playerAnswers.Remove(clientId);
+                    HideQuestionPanelForClientClientRpc(targets);
+                    CheckAllAnswersSubmitted();
+                }
             }
         }
 
@@ -538,7 +568,7 @@ namespace BossFight2D.Quiz
             if (!IsServer) return;
             ejectedPlayers.Add(clientId);
             Debug.Log($"[QuizManager] Player {clientId} marked as ejected - must re-ready to rejoin");
-            var readyStation = FindObjectOfType<ReadyStation>();
+            var readyStation = FindFirstObjectByType<ReadyStation>();
             if (readyStation == null)
             {
                 Debug.LogError("[QuizManager] ReadyStation not found in scene.");
@@ -696,6 +726,15 @@ namespace BossFight2D.Quiz
             }
         }
 
+        [ClientRpc]
+        private void HideQuestionPanelForClientClientRpc(ClientRpcParams clientRpcParams = default)
+        {
+            if (QuestionPanelController.Instance != null)
+            {
+                QuestionPanelController.Instance.HidePanel();
+            }
+        }
+
         public void SubmitAnswer(ulong playerId, int answerIndex)
         {
             if (!IsServer || State.Value != QuizState.Question) return;
@@ -755,12 +794,13 @@ namespace BossFight2D.Quiz
         private void CheckAllAnswersSubmitted()
         {
             var nm = NetworkManager.Singleton;
-            int requiredCount = nm.ConnectedClients.Count;
-            if (ExcludeServerFromPlayerCounts)
-            {
-                // Exclude the server/host client in headless mode
-                requiredCount = Mathf.Max(0, requiredCount - 1);
-            }
+            if (nm == null) return;
+            int requiredCount = CalculateRequiredAnswerCount(
+                nm.ConnectedClientsIds,
+                playerReadyStatus,
+                ejectedPlayers,
+                ExcludeServerFromPlayerCounts,
+                NetworkManager.ServerClientId);
 
             if (enableReconnectGrace && State.Value == QuizState.Question)
             {
@@ -1043,7 +1083,11 @@ namespace BossFight2D.Quiz
                 }
             }
             decisionActive = false;
-            StartCoroutine(StartNextQuestionAfterDelay(1.0f));
+
+            if (!anyAttack)
+            {
+                StartCoroutine(StartNextQuestionAfterDelay(1.0f));
+            }
         }
 
         [ClientRpc]
@@ -1127,7 +1171,11 @@ namespace BossFight2D.Quiz
             {
                 nextQuestionAllowedAt = Time.time; // allow immediate start
             }
-            StartQuiz();
+
+            if (continuousReadyFlow && Time.time >= nextQuestionAllowedAt)
+            {
+                CheckAllPlayersReady();
+            }
         }
 
         private System.Collections.IEnumerator StartNextQuestionAfterDelay(float seconds)
@@ -1138,7 +1186,10 @@ namespace BossFight2D.Quiz
                 t -= Time.deltaTime;
                 yield return null;
             }
-            if (IsServer && State.Value == QuizState.Idle) StartQuiz();
+            if (IsServer && State.Value == QuizState.Idle && Time.time >= nextQuestionAllowedAt)
+            {
+                CheckAllPlayersReady();
+            }
         }
 
         private System.Collections.IEnumerator StartDecisionPhaseAfterDelay(float seconds, ulong? candidate)
@@ -1178,6 +1229,8 @@ namespace BossFight2D.Quiz
             // Guard: only accept during the question phase
             if (State.Value != QuizState.Question) return;
             var senderId = rpcParams.Receive.SenderClientId;
+            if (ejectedPlayers.Contains(senderId)) return;
+            if (!playerReadyStatus.TryGetValue(senderId, out var isReady) || !isReady) return;
             if (playerAnswers.ContainsKey(senderId)) return;
             SubmitAnswer(senderId, answerIndex);
         }

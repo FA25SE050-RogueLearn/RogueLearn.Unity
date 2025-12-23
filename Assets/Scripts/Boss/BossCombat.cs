@@ -168,7 +168,7 @@ namespace BossFight2D.Boss
                 }
             }
             gm = FindFirstObjectByType<GameManager>();
-            _readyStation = FindObjectOfType<ReadyStation>();
+            _readyStation = FindFirstObjectByType<ReadyStation>();
         }
 
         void OnEnable()

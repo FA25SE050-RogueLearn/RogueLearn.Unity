@@ -1,9 +1,12 @@
+using System;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using System.Threading.Tasks;
 using BossFight2D.Systems;
-using TMPro;
 
+/// <summary>
+/// UI driver for starting a Relay host.
+/// </summary>
 public class HostWithRelayButton : MonoBehaviour
 {
     public Button hostButton;
@@ -16,21 +19,36 @@ public class HostWithRelayButton : MonoBehaviour
 
     private void Awake()
     {
-        connector = FindObjectOfType<RelayConnector>();
-        if (connector == null)
-        {
-            var go = new GameObject("RelayConnector");
-            connector = go.AddComponent<RelayConnector>();
-        }
+        connector = RelayConnector.GetOrCreate("RelayConnector");
         if (hostButton != null)
         {
             hostButton.onClick.AddListener(OnHostClicked);
         }
-        // Subscribe to the OnJoinCodeGenerated event so that whenever RelayConnector
-        // finishes allocating a relay and produces a join code, we automatically
-        // display that code in the joinCodeLabel (if one is assigned in the Inspector).
-        connector.OnJoinCodeGenerated += code => { if (joinCodeLabel != null) joinCodeLabel.text = code; };
-        connector.OnStatus += msg => { if (statusLabel != null) statusLabel.text = msg; };
+        else
+        {
+            Debug.LogWarning("[HostWithRelayButton] hostButton is not assigned.");
+        }
+        connector.OnJoinCodeGenerated += OnJoinCodeGenerated;
+        connector.OnStatus += OnRelayStatus;
+    }
+
+    private void OnDestroy()
+    {
+        if (connector != null)
+        {
+            connector.OnJoinCodeGenerated -= OnJoinCodeGenerated;
+            connector.OnStatus -= OnRelayStatus;
+        }
+    }
+
+    private void OnJoinCodeGenerated(string code)
+    {
+        if (joinCodeLabel != null) joinCodeLabel.text = code;
+    }
+
+    private void OnRelayStatus(string message)
+    {
+        if (statusLabel != null) statusLabel.text = message;
     }
 
     private async void OnHostClicked()
@@ -40,7 +58,21 @@ public class HostWithRelayButton : MonoBehaviour
         Debug.LogWarning("Hosting is not supported in WebGL builds. Please host from desktop/editor.");
         return;
         #endif
-        if (statusLabel != null) statusLabel.text = "Starting host...";
-        await connector.StartHostWithRelayAsync();
+        try
+        {
+            if (statusLabel != null) statusLabel.text = "Starting host...";
+            if (connector == null)
+            {
+                Debug.LogError("[HostWithRelayButton] RelayConnector instance is missing.");
+                if (statusLabel != null) statusLabel.text = "RelayConnector missing.";
+                return;
+            }
+            await connector.StartHostWithRelayAsync();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[HostWithRelayButton] Failed to start host: {ex.Message}");
+            if (statusLabel != null) statusLabel.text = "Host failed.";
+        }
     }
 }

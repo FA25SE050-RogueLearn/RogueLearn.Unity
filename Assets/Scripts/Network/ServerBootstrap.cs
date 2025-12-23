@@ -136,7 +136,7 @@ namespace BossFight2D.Network
 
                             // Find scene-authored LobbyStateManager (NetworkObject) and publish join code.
                             // Avoid runtime-spawned NetworkObject to prevent prefab registration errors on clients.
-                            var lobby = GameObject.FindObjectOfType<LobbyStateManager>();
+                            var lobby = UnityEngine.Object.FindFirstObjectByType<LobbyStateManager>();
                             if (lobby != null)
                             {
                                 lobby.SetJoinCode(joinCode);

@@ -35,13 +35,11 @@ namespace BossFight2D.UI
             // Resolve UI by common names if not explicitly assigned
             if (healthSlider == null)
             {
-                var go = GameObject.Find("Health");
-                if (go != null) healthSlider = go.GetComponent<Slider>();
+                healthSlider = FindSliderInLoadedScenes("Health");
             }
             if (focusSlider == null)
             {
-                var go = GameObject.Find("Focus");
-                if (go != null) focusSlider = go.GetComponent<Slider>();
+                focusSlider = FindSliderInLoadedScenes("Focus");
             }
 
             // Resolve gameplay components
@@ -56,6 +54,22 @@ namespace BossFight2D.UI
 
             // Initialize once
             UpdateBars(force: true);
+        }
+
+        private static Slider FindSliderInLoadedScenes(string objectName)
+        {
+            var sliders = Resources.FindObjectsOfTypeAll<Slider>();
+            foreach (var s in sliders)
+            {
+                if (s == null) continue;
+                var go = s.gameObject;
+                if (go == null) continue;
+                if (go.name != objectName) continue;
+                var scene = go.scene;
+                if (!scene.IsValid() || !scene.isLoaded) continue;
+                return s;
+            }
+            return null;
         }
 
         private void Update()

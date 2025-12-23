@@ -30,11 +30,12 @@ namespace BossFight2D.UI
         [SerializeField] private bool autoConfigureOnAwake = true;
         [SerializeField] private bool useThemeColors = true;
 
-        private int lifelinesRemaining = 1;
+        private int lifelinesRemaining;
         private bool lifelineUsedThisQuestion = false;
 
         void Awake()
         {
+            lifelinesRemaining = Mathf.Max(0, maxLifelines);
             if (autoConfigureOnAwake)
             {
                 ConfigureLayout();
@@ -51,6 +52,8 @@ namespace BossFight2D.UI
             {
                 lifelineButton.onClick.AddListener(OnLifelineButtonClicked);
             }
+
+            UpdateLifelineButton();
         }
 
         void OnDestroy()
@@ -93,6 +96,8 @@ namespace BossFight2D.UI
 
         private void ConfigureLifelineButton()
         {
+            var theme = UIThemeManager.Instance;
+
             // Create lifeline button if not present
             if (lifelineButton == null)
             {
@@ -103,7 +108,7 @@ namespace BossFight2D.UI
 
                 // Add background image
                 var buttonImage = buttonObj.AddComponent<Image>();
-                buttonImage.color = UIThemeManager.Instance.buttonNormal;
+                buttonImage.color = theme != null ? theme.buttonNormal : Color.white;
 
                 // Add button component
                 lifelineButton = buttonObj.AddComponent<Button>();
@@ -125,7 +130,7 @@ namespace BossFight2D.UI
                 iconRect.sizeDelta = new Vector2(40f, 40f);
 
                 lifelineIcon = iconObj.AddComponent<Image>();
-                lifelineIcon.color = UIThemeManager.Instance.textPrimary;
+                lifelineIcon.color = theme != null ? theme.textPrimary : Color.white;
 
                 // Create text label
                 var textObj = new GameObject("Text");
@@ -139,7 +144,7 @@ namespace BossFight2D.UI
                 lifelineText = textObj.AddComponent<TextMeshProUGUI>();
                 lifelineText.text = "50/50";
                 lifelineText.fontSize = 14f;
-                lifelineText.color = UIThemeManager.Instance.textSecondary;
+                lifelineText.color = theme != null ? theme.textSecondary : Color.white;
                 lifelineText.alignment = TextAlignmentOptions.Center;
 
                 // Create count badge
@@ -152,7 +157,7 @@ namespace BossFight2D.UI
                 countRect.sizeDelta = new Vector2(24f, 24f);
 
                 var countBg = countObj.AddComponent<Image>();
-                countBg.color = UIThemeManager.Instance.primaryPurple;
+                countBg.color = theme != null ? theme.primaryPurple : Color.black;
 
                 lifelineCountText = countObj.AddComponent<TextMeshProUGUI>();
                 lifelineCountText.text = "1";
@@ -161,7 +166,7 @@ namespace BossFight2D.UI
                 lifelineCountText.alignment = TextAlignmentOptions.Center;
                 lifelineCountText.fontStyle = FontStyles.Bold;
 
-                Debug.Log("  ✓ Created Lifeline button (80x80px)");
+                Debug.Log("[SupportItemsPanel] Created Lifeline button (80x80px)");
             }
 
             UpdateLifelineButton();
@@ -188,7 +193,7 @@ namespace BossFight2D.UI
                 layout.childForceExpandWidth = true;
                 layout.childForceExpandHeight = false;
 
-                Debug.Log("  ✓ Created Power-Ups container (80x200px)");
+                Debug.Log("[SupportItemsPanel] Created Power-Ups container (80x200px)");
             }
         }
 
@@ -197,6 +202,7 @@ namespace BossFight2D.UI
             if (!useThemeColors) return;
 
             var theme = UIThemeManager.Instance;
+            if (theme == null) return;
 
             if (lifelineButton != null)
             {
@@ -214,7 +220,7 @@ namespace BossFight2D.UI
             if (lifelineIcon != null)
                 lifelineIcon.color = theme.textPrimary;
 
-            Debug.Log("  ✓ Theme colors applied");
+            Debug.Log("[SupportItemsPanel] Theme colors applied");
         }
 
         #region Lifeline Management
@@ -265,9 +271,13 @@ namespace BossFight2D.UI
             // Update visual state
             if (lifelineIcon != null)
             {
-                lifelineIcon.color = lifelineButton.interactable
-                    ? UIThemeManager.Instance.textPrimary
-                    : UIThemeManager.Instance.textDisabled;
+                var theme = UIThemeManager.Instance;
+                if (theme != null)
+                {
+                    lifelineIcon.color = lifelineButton.interactable
+                        ? theme.textPrimary
+                        : theme.textDisabled;
+                }
             }
         }
 
@@ -276,7 +286,7 @@ namespace BossFight2D.UI
         /// </summary>
         public void SetLifelineCount(int count)
         {
-            lifelinesRemaining = Mathf.Max(0, count);
+            lifelinesRemaining = Mathf.Clamp(count, 0, Mathf.Max(0, maxLifelines));
             lifelineUsedThisQuestion = false;
             UpdateLifelineButton();
         }
@@ -299,8 +309,15 @@ namespace BossFight2D.UI
         /// </summary>
         public void AddPowerUp(string powerUpId, string displayName, Sprite icon, float duration = 0f)
         {
-            // Check if power-up already exists
-            var existingSlot = powerUpSlots.Find(slot => slot.PowerUpId == powerUpId);
+            if (string.IsNullOrEmpty(powerUpId))
+            {
+                Debug.Log("[SupportItemsPanel] Ignoring power-up with empty id");
+                return;
+            }
+
+            PruneNullPowerUpSlots();
+
+            var existingSlot = FindPowerUpSlot(powerUpId);
             if (existingSlot != null)
             {
                 // Refresh duration if timed
@@ -311,11 +328,18 @@ namespace BossFight2D.UI
                 return;
             }
 
+            if (powerUpsContainer == null)
+            {
+                ConfigurePowerUpsContainer();
+            }
+
+            var parent = powerUpsContainer != null ? powerUpsContainer : transform;
+
             // Create new power-up slot
             GameObject slotObj;
             if (powerUpSlotPrefab != null)
             {
-                slotObj = Instantiate(powerUpSlotPrefab, powerUpsContainer);
+                slotObj = Instantiate(powerUpSlotPrefab, parent);
             }
             else
             {
@@ -339,7 +363,11 @@ namespace BossFight2D.UI
         /// </summary>
         public void RemovePowerUp(string powerUpId)
         {
-            var slot = powerUpSlots.Find(s => s.PowerUpId == powerUpId);
+            if (string.IsNullOrEmpty(powerUpId)) return;
+
+            PruneNullPowerUpSlots();
+
+            var slot = FindPowerUpSlot(powerUpId);
             if (slot != null)
             {
                 powerUpSlots.Remove(slot);
@@ -348,16 +376,47 @@ namespace BossFight2D.UI
             }
         }
 
+        private void PruneNullPowerUpSlots()
+        {
+            for (var i = powerUpSlots.Count - 1; i >= 0; i--)
+            {
+                if (powerUpSlots[i] == null)
+                {
+                    powerUpSlots.RemoveAt(i);
+                }
+            }
+        }
+
+        private PowerUpSlot FindPowerUpSlot(string powerUpId)
+        {
+            for (var i = 0; i < powerUpSlots.Count; i++)
+            {
+                var slot = powerUpSlots[i];
+                if (slot != null && slot.PowerUpId == powerUpId)
+                {
+                    return slot;
+                }
+            }
+
+            return null;
+        }
+
         private GameObject CreateDefaultPowerUpSlot()
         {
+            if (powerUpsContainer == null)
+            {
+                ConfigurePowerUpsContainer();
+            }
+
             var slotObj = new GameObject("PowerUpSlot");
-            slotObj.transform.SetParent(powerUpsContainer, false);
+            slotObj.transform.SetParent(powerUpsContainer != null ? powerUpsContainer : transform, false);
             var slotRect = slotObj.AddComponent<RectTransform>();
             slotRect.sizeDelta = new Vector2(60f, 60f);
 
             // Add background
             var bgImage = slotObj.AddComponent<Image>();
-            bgImage.color = UIThemeManager.Instance.backgroundMedium;
+            var theme = UIThemeManager.Instance;
+            bgImage.color = theme != null ? theme.backgroundMedium : Color.black;
 
             // Add layout element
             var layoutElement = slotObj.AddComponent<LayoutElement>();
@@ -414,17 +473,20 @@ namespace BossFight2D.UI
         private float duration = 0f;
         private float remainingTime = 0f;
         private bool isTimed = false;
+        private bool expiredRaised = false;
 
         public void Initialize(string id, string displayName, Sprite icon, float durationSeconds)
         {
             PowerUpId = id;
-            duration = durationSeconds;
-            remainingTime = durationSeconds;
+            duration = Mathf.Max(0f, durationSeconds);
+            remainingTime = duration;
             isTimed = duration > 0f;
+            expiredRaised = false;
 
-            // Find or create UI elements
+            EnsureUi();
+
             if (iconImage == null)
-                iconImage = GetComponentInChildren<Image>();
+                iconImage = GetComponentInChildren<Image>(true);
 
             if (iconImage != null && icon != null)
                 iconImage.sprite = icon;
@@ -432,8 +494,7 @@ namespace BossFight2D.UI
             if (nameText != null)
                 nameText.text = displayName;
 
-            if (isTimed && durationFill != null)
-                durationFill.fillAmount = 1f;
+            UpdateDurationUi();
         }
 
         void Update()
@@ -443,28 +504,154 @@ namespace BossFight2D.UI
             remainingTime -= Time.deltaTime;
             if (remainingTime <= 0f)
             {
-                EventBus.TriggerPowerUpExpired(PowerUpId);
+                remainingTime = 0f;
+                isTimed = false;
+                UpdateDurationUi();
+
+                if (!expiredRaised)
+                {
+                    expiredRaised = true;
+                    if (!string.IsNullOrEmpty(PowerUpId))
+                    {
+                        EventBus.TriggerPowerUpExpired(PowerUpId);
+                    }
+                }
                 return;
             }
 
-            // Update duration fill
-            if (durationFill != null)
-            {
-                durationFill.fillAmount = remainingTime / duration;
-            }
-
-            // Update timer text
-            if (timerText != null)
-            {
-                timerText.text = Mathf.CeilToInt(remainingTime).ToString();
-            }
+            UpdateDurationUi();
         }
 
         public void SetDuration(float newDuration)
         {
-            duration = newDuration;
-            remainingTime = newDuration;
-            isTimed = true;
+            duration = Mathf.Max(0f, newDuration);
+            remainingTime = duration;
+            isTimed = duration > 0f;
+            expiredRaised = false;
+            EnsureUi();
+            UpdateDurationUi();
+        }
+
+        private void EnsureUi()
+        {
+            if (iconImage == null)
+            {
+                var iconTransform = transform.Find("Icon");
+                if (iconTransform == null)
+                {
+                    var iconObj = new GameObject("Icon");
+                    iconObj.transform.SetParent(transform, false);
+                    var rect = iconObj.AddComponent<RectTransform>();
+                    rect.anchorMin = new Vector2(0.5f, 0.5f);
+                    rect.anchorMax = new Vector2(0.5f, 0.5f);
+                    rect.anchoredPosition = Vector2.zero;
+                    rect.sizeDelta = new Vector2(36f, 36f);
+                    iconImage = iconObj.AddComponent<Image>();
+                }
+                else
+                {
+                    iconImage = iconTransform.GetComponent<Image>();
+                    if (iconImage == null)
+                    {
+                        iconImage = iconTransform.gameObject.AddComponent<Image>();
+                    }
+                }
+            }
+
+            if (durationFill == null)
+            {
+                var fillTransform = transform.Find("DurationFill");
+                if (fillTransform == null)
+                {
+                    var fillObj = new GameObject("DurationFill");
+                    fillObj.transform.SetParent(transform, false);
+                    var rect = fillObj.AddComponent<RectTransform>();
+                    rect.anchorMin = Vector2.zero;
+                    rect.anchorMax = Vector2.one;
+                    rect.offsetMin = Vector2.zero;
+                    rect.offsetMax = Vector2.zero;
+                    durationFill = fillObj.AddComponent<Image>();
+                    durationFill.type = Image.Type.Filled;
+                    durationFill.fillMethod = Image.FillMethod.Radial360;
+                    durationFill.fillOrigin = (int)Image.Origin360.Top;
+                    durationFill.fillClockwise = false;
+
+                    var theme = UIThemeManager.Instance;
+                    durationFill.color = theme != null ? theme.primaryPurple : new Color(1f, 1f, 1f, 0.35f);
+                }
+                else
+                {
+                    durationFill = fillTransform.GetComponent<Image>();
+                    if (durationFill == null)
+                    {
+                        durationFill = fillTransform.gameObject.AddComponent<Image>();
+                    }
+                }
+            }
+
+            if (timerText == null)
+            {
+                var timerTransform = transform.Find("TimerText");
+                if (timerTransform == null)
+                {
+                    var timerObj = new GameObject("TimerText");
+                    timerObj.transform.SetParent(transform, false);
+                    var rect = timerObj.AddComponent<RectTransform>();
+                    rect.anchorMin = Vector2.zero;
+                    rect.anchorMax = Vector2.one;
+                    rect.offsetMin = Vector2.zero;
+                    rect.offsetMax = Vector2.zero;
+                    timerText = timerObj.AddComponent<TextMeshProUGUI>();
+                    timerText.fontSize = 14f;
+                    timerText.alignment = TextAlignmentOptions.Center;
+                    timerText.fontStyle = FontStyles.Bold;
+
+                    var theme = UIThemeManager.Instance;
+                    timerText.color = theme != null ? theme.textPrimary : Color.white;
+                }
+                else
+                {
+                    timerText = timerTransform.GetComponent<TextMeshProUGUI>();
+                    if (timerText == null)
+                    {
+                        timerText = timerTransform.gameObject.AddComponent<TextMeshProUGUI>();
+                    }
+                }
+            }
+
+            if (durationFill != null)
+            {
+                durationFill.transform.SetAsFirstSibling();
+            }
+            if (iconImage != null)
+            {
+                iconImage.transform.SetAsLastSibling();
+            }
+            if (timerText != null)
+            {
+                timerText.transform.SetAsLastSibling();
+            }
+        }
+
+        private void UpdateDurationUi()
+        {
+            if (durationFill != null)
+            {
+                durationFill.gameObject.SetActive(isTimed);
+                if (isTimed && duration > 0f)
+                {
+                    durationFill.fillAmount = Mathf.Clamp01(remainingTime / duration);
+                }
+            }
+
+            if (timerText != null)
+            {
+                timerText.gameObject.SetActive(isTimed);
+                if (isTimed)
+                {
+                    timerText.text = Mathf.CeilToInt(remainingTime).ToString();
+                }
+            }
         }
     }
 }

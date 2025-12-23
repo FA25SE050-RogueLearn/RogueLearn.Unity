@@ -1,65 +1,50 @@
-// SceneBootstrapper.cs - auto-creates minimal runtime objects if missing
 using UnityEngine;
 using System.Linq;
 using BossFight2D.Systems;
-using BossFight2D.Player;
-using BossFight2D.Boss;
 using BossFight2D.Core;
-using BossFight2D.UI;
-using Cinemachine;
-using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 
 [DefaultExecutionOrder(-1000)]
+/// <summary>
+/// Ensures essential singleton-like runtime objects exist across scenes.
+/// </summary>
 public class SceneBootstrapper : MonoBehaviour
 {
     private static bool _spawned;
     private static bool _lobbySetupAttempted;
 
+    /// <summary>
+    /// Creates a persistent bootstrapper instance once after the first scene load.
+    /// </summary>
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Init()
     {
         if (_spawned) return;
-        var go = new GameObject("SceneBootstrapper");
-        DontDestroyOnLoad(go);
-        go.AddComponent<SceneBootstrapper>();
+        var bootstrapperObject = new GameObject("SceneBootstrapper");
+        DontDestroyOnLoad(bootstrapperObject);
+        bootstrapperObject.AddComponent<SceneBootstrapper>();
         _spawned = true;
     }
 
+    /// <summary>
+    /// Runs per-scene initialization for the currently active scene.
+    /// </summary>
     private void Start()
     {
-        // Skip bootstrap in Dashboard or character preview scenes to avoid spawning gameplay systems
         var sceneName = SceneManager.GetActiveScene().name;
         Debug.Log($"[SceneBootstrapper] Start() in scene '{sceneName}'. isBatchMode={Application.isBatchMode}");
-        if (sceneName == "Dashboard" || sceneName == "DashboardCharacterPreview")
+        if (ShouldSkipBootstrap(sceneName))
         {
             return;
         }
-        // Setup lobby UI/state when ClientUI/ServerHeadless is active
-        TrySetupLobby(sceneName);
 
-        // Ensure a RelayConnector exists so the Web page can SendMessage("RelayConnector", "JoinWithCode", code)
-        // even in scenes that do not contain lobby UI prefabs.
-        EnsureRelayConnectorExists();
-        EnsureGameSessionClientExists();
-        // If this scene contains a Main Menu, avoid spawning gameplay systems
+        EnsureGlobalServicesForScene(sceneName);
         var isMainMenu = FindFirstObjectByType<BossFight2D.UI.MainMenuUI>() != null;
         if (isMainMenu)
         {
             EnsureGameManagerOnly();
-            // Do not spawn player, boss, question systems, or ready station in the main menu.
             return;
         }
-
-        // EnsureSystems();
-        // var player = EnsurePlayer();
-        //EnsureBoss();
-        // Optionally: you can add camera or lighting bootstrap here later
-
-        // Gate game start via a ReadyStation trigger near the player
-        // EnsureReadyStation(player);
-        // Start is gated by ReadyStation; do not auto-start here.
-        // The game will transition from Init to Playing when the player marks Ready at the station.
     }
 
     private void OnEnable()
@@ -72,95 +57,157 @@ public class SceneBootstrapper : MonoBehaviour
         SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
+    /// <summary>
+    /// Handles scene transitions for persistent services and Gameplay helpers.
+    /// </summary>
+    /// <param name="scene">The scene that finished loading.</param>
+    /// <param name="mode">The load mode used for the transition.</param>
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         Debug.Log($"[SceneBootstrapper] OnSceneLoaded: name='{scene.name}', mode={mode}");
-        TrySetupLobby(scene.name);
-        EnsureRelayConnectorExists();
-        EnsureGameSessionClientExists();
-        EnsureNetworkEventLoggerExists();
+        if (!ShouldSkipBootstrap(scene.name))
+        {
+            EnsureGlobalServicesForScene(scene.name);
+        }
 
-        // When Gameplay scene loads on clients, attach a GameplayStartup helper to ensure player spawn/placement
         if (scene.name == "Gameplay")
         {
-            if (FindFirstObjectByType<BossFight2D.Network.GameplayStartup>() == null)
-            {
-                var go = new GameObject("GameplayStartup");
-                var gs = go.AddComponent<BossFight2D.Network.GameplayStartup>();
-                // Try to find explicit spawn points by tag, but guard against undefined tag
-                GameObject[] tagged = null;
-                try
-                {
-                    tagged = GameObject.FindGameObjectsWithTag("SpawnPoint");
-                }
-                catch (UnityException ex)
-                {
-                    Debug.LogWarning($"[SceneBootstrapper] Tag 'SpawnPoint' not defined in project. Fallback to container search. Details: {ex.Message}");
-                }
-
-                if (tagged != null && tagged.Length > 0)
-                {
-                    gs.spawnPoints = System.Array.ConvertAll(tagged, t => t.transform);
-                    Debug.Log($"[SceneBootstrapper] Found {gs.spawnPoints.Length} spawn points via tag.");
-                }
-                else
-                {
-                    // Try a container named "SpawnPoints" (use its children)
-                    var container = GameObject.Find("SpawnPoints");
-                    if (container != null)
-                    {
-                        var list = new System.Collections.Generic.List<Transform>();
-                        foreach (Transform child in container.transform)
-                        {
-                            list.Add(child);
-                        }
-                        gs.spawnPoints = list.ToArray();
-                        Debug.Log($"[SceneBootstrapper] Found {gs.spawnPoints.Length} spawn points via 'SpawnPoints' container.");
-                    }
-                    else
-                    {
-                        Debug.LogWarning("[SceneBootstrapper] No spawn points found. Ensure either tag 'SpawnPoint' exists with placed objects, or create a 'SpawnPoints' container with child transforms.");
-                    }
-                }
-            }
-
-            // Ensure the Cinemachine Virtual Camera follows the local player's transform.
-            // This supplements PlayerController's setup to cover any initialization race conditions.
-            try
-            {
-                var camSetup = FindFirstObjectByType<BossFight2D.CameraSystem.MultiplayerCinemachineSetup>();
-                if (camSetup != null)
-                {
-                    camSetup.RefreshLocalPlayer();
-                }
-                else
-                {
-                    var vcam = FindFirstObjectByType<Cinemachine.CinemachineVirtualCamera>();
-                    if (vcam != null)
-                    {
-                        var ownedPlayer = GameObject.FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
-                            .FirstOrDefault(pc => pc.IsOwner);
-                        if (ownedPlayer != null)
-                        {
-                            vcam.Follow = ownedPlayer.transform;
-                        }
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogWarning($"[SceneBootstrapper] Failed to assign Cinemachine camera follow: {ex.Message}");
-            }
+            EnsureGameplayStartupExists();
+            TryAssignGameplayCameraFollow();
         }
     }
 
+    /// <summary>
+    /// Returns true when a scene should not receive auto-bootstrap services.
+    /// </summary>
+    /// <param name="sceneName">The active scene name.</param>
+    private static bool ShouldSkipBootstrap(string sceneName)
+    {
+        return sceneName == "Dashboard" || sceneName == "DashboardCharacterPreview";
+    }
+
+    /// <summary>
+    /// Ensures persistent services needed by both menu and gameplay flows exist.
+    /// </summary>
+    /// <param name="sceneName">The active scene name.</param>
+    private void EnsureGlobalServicesForScene(string sceneName)
+    {
+        TrySetupLobby(sceneName);
+        EnsureRelayConnectorExists();
+        EnsureGameSessionClientExists();
+        EnsureNetworkEventLoggerExists();
+    }
+
+    /// <summary>
+    /// Ensures a <see cref="BossFight2D.Network.GameplayStartup"/> exists in gameplay scenes.
+    /// </summary>
+    private void EnsureGameplayStartupExists()
+    {
+        if (FindFirstObjectByType<BossFight2D.Network.GameplayStartup>() != null) return;
+
+        var gameplayStartupObject = new GameObject("GameplayStartup");
+        var gameplayStartup = gameplayStartupObject.AddComponent<BossFight2D.Network.GameplayStartup>();
+        gameplayStartup.spawnPoints = ResolveSpawnPoints();
+    }
+
+    /// <summary>
+    /// Resolves spawn points via tag lookup first, falling back to a named container.
+    /// </summary>
+    private Transform[] ResolveSpawnPoints()
+    {
+        var spawnPointsByTag = TryFindSpawnPointsByTag("SpawnPoint");
+        if (spawnPointsByTag != null && spawnPointsByTag.Length > 0)
+        {
+            Debug.Log($"[SceneBootstrapper] Found {spawnPointsByTag.Length} spawn points via tag.");
+            return spawnPointsByTag;
+        }
+
+        var spawnPointsByContainer = TryFindSpawnPointsByContainer("SpawnPoints");
+        if (spawnPointsByContainer != null && spawnPointsByContainer.Length > 0)
+        {
+            Debug.Log($"[SceneBootstrapper] Found {spawnPointsByContainer.Length} spawn points via 'SpawnPoints' container.");
+            return spawnPointsByContainer;
+        }
+
+        Debug.LogWarning("[SceneBootstrapper] No spawn points found. Ensure either tag 'SpawnPoint' exists with placed objects, or create a 'SpawnPoints' container with child transforms.");
+        return System.Array.Empty<Transform>();
+    }
+
+    /// <summary>
+    /// Finds spawn points using a Unity tag if it is defined.
+    /// </summary>
+    /// <param name="tag">The Unity tag to search for.</param>
+    private static Transform[] TryFindSpawnPointsByTag(string tag)
+    {
+        try
+        {
+            var tagged = GameObject.FindGameObjectsWithTag(tag);
+            if (tagged == null || tagged.Length == 0) return null;
+            return System.Array.ConvertAll(tagged, t => t.transform);
+        }
+        catch (UnityException ex)
+        {
+            Debug.LogWarning($"[SceneBootstrapper] Tag '{tag}' not defined in project. Fallback to container search. Details: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Finds spawn points as children of a named container GameObject.
+    /// </summary>
+    /// <param name="containerName">The GameObject name containing spawn point transforms.</param>
+    private static Transform[] TryFindSpawnPointsByContainer(string containerName)
+    {
+        var container = GameObject.Find(containerName);
+        if (container == null) return null;
+
+        var list = new System.Collections.Generic.List<Transform>();
+        foreach (Transform child in container.transform)
+        {
+            list.Add(child);
+        }
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// Assigns the Cinemachine follow target to the local owned player if possible.
+    /// </summary>
+    private void TryAssignGameplayCameraFollow()
+    {
+        try
+        {
+            var camSetup = FindFirstObjectByType<BossFight2D.CameraSystem.MultiplayerCinemachineSetup>();
+            if (camSetup != null)
+            {
+                camSetup.RefreshLocalPlayer();
+                return;
+            }
+
+            var vcam = FindFirstObjectByType<Cinemachine.CinemachineVirtualCamera>();
+            if (vcam == null) return;
+
+            var ownedPlayer = GameObject.FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
+                .FirstOrDefault(pc => pc.IsOwner);
+            if (ownedPlayer != null)
+            {
+                vcam.Follow = ownedPlayer.transform;
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[SceneBootstrapper] Failed to assign Cinemachine camera follow: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Ensures lobby UI/state exists in lobby-related scenes.
+    /// </summary>
+    /// <param name="sceneName">Active scene name.</param>
     private void TrySetupLobby(string sceneName)
     {
         if (_lobbySetupAttempted && SceneManager.GetActiveScene().name == sceneName) return;
         if (sceneName == "ServerHeadless" || sceneName == "ClientUI" || sceneName == "HostUI")
         {
-            // Server: do NOT auto-spawn lobby network objects at runtime.
-            // Rely on scene-authored LobbyStateManager (NetworkObject) to avoid prefab registration issues.
             var nm = Unity.Netcode.NetworkManager.Singleton;
             if (nm != null && nm.IsServer)
             {
@@ -171,8 +218,6 @@ public class SceneBootstrapper : MonoBehaviour
                 }
             }
 
-            // Clients only: ensure a simple LobbyUI overlay exists.
-            // Do not create UI on headless/server.
             if (!Application.isBatchMode && (nm == null || !nm.IsServer))
             {
                 if (FindFirstObjectByType<LobbyUI>() == null)
@@ -185,218 +230,9 @@ public class SceneBootstrapper : MonoBehaviour
             _lobbySetupAttempted = true;
         }
     }
-
-    private void EnsureSystems()
-    {
-        var gm = FindFirstObjectByType<GameManager>();
-        GameObject systemsRoot = null;
-
-        if (gm == null)
-        {
-            systemsRoot = new GameObject("Systems");
-            gm = systemsRoot.AddComponent<GameManager>();
-        }
-        else
-        {
-            systemsRoot = gm.gameObject;
-        }
-
-        // Ensure WebBridge is present for WebGL messaging
-        if (systemsRoot.GetComponent<WebBridge>() == null)
-        {
-            systemsRoot.AddComponent<WebBridge>();
-        }
-
-        // Ensure RelayConnector exists for WebGL <-> Unity join messaging
-        if (FindFirstObjectByType<RelayConnector>() == null)
-        {
-            var rcGo = new GameObject("RelayConnector");
-            rcGo.AddComponent<RelayConnector>();
-        }
-
-        // Ensure PlayerHUD exists to drive Health/Focus UI (sliders named "Health" and "Focus")
-        if (FindFirstObjectByType<PlayerHUD>() == null)
-        {
-            systemsRoot.AddComponent<PlayerHUD>();
-        }
-
-        // Ensure BossHUD exists to drive Boss Health UI (slider named "BossHealth")
-        if (FindFirstObjectByType<BossFight2D.UI.BossHUD>() == null)
-        {
-            systemsRoot.AddComponent<BossFight2D.UI.BossHUD>();
-        }
-
-        // Ensure GameStateUI exists so gameplay theme music and Win/Lose overlays are available
-        if (FindFirstObjectByType<BossFight2D.UI.GameStateUI>() == null)
-        {
-            systemsRoot.AddComponent<BossFight2D.UI.GameStateUI>();
-        }
-
-        // Ensure PauseMenu exists so player can open settings/pause with Escape
-        if (FindFirstObjectByType<BossFight2D.UI.PauseMenu>() == null)
-        {
-            systemsRoot.AddComponent<BossFight2D.UI.PauseMenu>();
-        }
-
-        // Ensure BossHealth slider exists in the UI (auto-create if missing)
-        //EnsureBossHealthUIExists();
-    }
-
-    private GameObject EnsurePlayer()
-    {
-        var playerController = FindFirstObjectByType<PlayerController>();
-        GameObject go;
-        if (playerController != null)
-        {
-            go = playerController.gameObject;
-        }
-        else
-        {
-            go = new GameObject("Player");
-            go.layer = TryGetLayer("Player");
-            go.tag = "Player";
-
-            var camera = FindFirstObjectByType<CinemachineVirtualCamera>();
-
-            if (camera)
-            {
-                camera.Follow = go.transform;
-            }
-
-            // Visual placeholder sprite (simple 1x1 green square)
-            var sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = CreateColorSprite(Color.green);
-
-            var rb = go.AddComponent<Rigidbody2D>();
-            rb.gravityScale = 0f;
-            rb.freezeRotation = true;
-
-            go.AddComponent<CircleCollider2D>();
-            go.AddComponent<PlayerController>();
-        }
-
-        // Ensure health/focus components exist so user can wire them up in Inspector
-        if (go.GetComponent<PlayerHealth>() == null) go.AddComponent<PlayerHealth>();
-        if (go.GetComponent<PlayerFocus>() == null) go.AddComponent<PlayerFocus>();
-        // Ensure question guard to freeze input & invincibility during questions
-        if (go.GetComponent<BossFight2D.Player.PlayerQuestionGuard>() == null) go.AddComponent<BossFight2D.Player.PlayerQuestionGuard>();
-
-        return go;
-    }
-
-    private void EnsureBoss()
-    {
-        var boss = FindFirstObjectByType<BossStateMachine>();
-        if (boss != null) return;
-
-        var go = new GameObject("Boss");
-        go.layer = TryGetLayer("Boss");
-
-        var sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = CreateColorSprite(Color.red);
-
-        go.AddComponent<BoxCollider2D>();
-        go.AddComponent<BossStateMachine>();
-        go.AddComponent<BossHealth>();
-        go.AddComponent<BossController>();
-        go.AddComponent<Unity.Netcode.NetworkObject>();
-    }
-
-    private int TryGetLayer(string name)
-    {
-        int layer = LayerMask.NameToLayer(name);
-        return layer < 0 ? 0 : layer;
-    }
-
-    private Sprite CreateColorSprite(Color c)
-    {
-        var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-        tex.SetPixel(0, 0, c);
-        tex.Apply();
-        return Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 16f);
-    }
-
-    private void EnsureBossHealthUIExists()
-    {
-        // If a Slider named "BossHealth" exists, we're done
-        var existing = GameObject.Find("BossHealth");
-        if (existing != null && existing.GetComponent<Slider>() != null) return;
-
-        // Find or create a Canvas
-        Canvas canvas = FindFirstObjectByType<Canvas>();
-        if (canvas == null)
-        {
-            var canvasGO = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            canvas = canvasGO.GetComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            var scaler = canvasGO.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920, 1080);
-        }
-
-        // Create Slider hierarchy
-        var sliderGO = new GameObject("BossHealth", typeof(RectTransform), typeof(Slider));
-        sliderGO.transform.SetParent(canvas.transform, false);
-        var rt = sliderGO.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f, 1f);
-        rt.anchorMax = new Vector2(0.5f, 1f);
-        rt.pivot = new Vector2(0.5f, 1f);
-        rt.anchoredPosition = new Vector2(0f, -20f);
-        rt.sizeDelta = new Vector2(300f, 20f);
-
-        var slider = sliderGO.GetComponent<Slider>();
-        slider.minValue = 0f;
-        slider.maxValue = 1f;
-        slider.value = 1f;
-        slider.interactable = false; // progress bar behavior
-
-        // Background
-        var bgGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
-        bgGO.transform.SetParent(sliderGO.transform, false);
-        var bgRT = bgGO.GetComponent<RectTransform>();
-        bgRT.anchorMin = Vector2.zero; bgRT.anchorMax = Vector2.one; bgRT.offsetMin = Vector2.zero; bgRT.offsetMax = Vector2.zero;
-        var bgImg = bgGO.GetComponent<Image>();
-        bgImg.color = new Color(0f, 0f, 0f, 0.5f);
-
-        // Fill Area
-        var fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
-        fillAreaGO.transform.SetParent(sliderGO.transform, false);
-        var faRT = fillAreaGO.GetComponent<RectTransform>();
-        faRT.anchorMin = new Vector2(0f, 0f);
-        faRT.anchorMax = new Vector2(1f, 1f);
-        faRT.offsetMin = new Vector2(3f, 3f);
-        faRT.offsetMax = new Vector2(-3f, -3f);
-
-        // Fill
-        var fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
-        fillGO.transform.SetParent(fillAreaGO.transform, false);
-        var fillRT = fillGO.GetComponent<RectTransform>();
-        fillRT.anchorMin = new Vector2(0f, 0f);
-        fillRT.anchorMax = new Vector2(1f, 1f);
-        fillRT.offsetMin = Vector2.zero; fillRT.offsetMax = Vector2.zero;
-        var fillImg = fillGO.GetComponent<Image>();
-        fillImg.color = new Color(0.8f, 0.1f, 0.1f, 0.9f); // red-ish
-
-        // Wire slider graphics
-        slider.targetGraphic = bgImg;
-        slider.fillRect = fillRT;
-        slider.handleRect = null; // no handle for progress bar
-        slider.direction = Slider.Direction.LeftToRight;
-    }
-
-    // Create or reuse a single-player ReadyStation near the player to gate game start
-    private void EnsureReadyStation(GameObject player)
-    {
-        if (FindFirstObjectByType<ReadyStation>() != null) return;
-        var go = new GameObject("ReadyStation");
-        go.transform.position = player != null ? player.transform.position + new Vector3(1.5f, 0f, 0f) : Vector3.zero;
-        var col = go.AddComponent<BoxCollider2D>();
-        col.isTrigger = true;
-        col.size = new Vector2(2f, 2f);
-        go.AddComponent<ReadyStation>();
-    }
-
-    // Minimal systems for Main Menu scenes: only ensure GameManager so menu can control start.
+    /// <summary>
+    /// Ensures the minimum runtime objects required for menu navigation exist.
+    /// </summary>
     private void EnsureGameManagerOnly()
     {
         var gm = FindFirstObjectByType<GameManager>();
@@ -405,20 +241,20 @@ public class SceneBootstrapper : MonoBehaviour
             var systemsRoot = new GameObject("Systems");
             systemsRoot.AddComponent<GameManager>();
         }
-        // Ensure RelayConnector still exists so WebGL page can send join messages from the main menu.
         EnsureRelayConnectorExists();
-        // Avoid creating QuestionManager, Player/Boss HUDs, Lifelines, Dev Hotkeys, etc.
     }
 
+    /// <summary>
+    /// Ensures a <see cref="RelayConnector"/> exists for UI and WebGL join messaging.
+    /// </summary>
     private void EnsureRelayConnectorExists()
     {
-        if (FindFirstObjectByType<RelayConnector>() == null)
-        {
-            var rcGo = new GameObject("RelayConnector");
-            rcGo.AddComponent<RelayConnector>();
-        }
+        RelayConnector.GetOrCreate("RelayConnector");
     }
 
+    /// <summary>
+    /// Ensures a <see cref="GameSessionClient"/> exists for backend session resolution and pack injection.
+    /// </summary>
     private void EnsureGameSessionClientExists()
     {
         if (FindFirstObjectByType<GameSessionClient>() == null)
@@ -428,6 +264,9 @@ public class SceneBootstrapper : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Ensures a <see cref="NetworkEventLogger"/> exists for runtime networking diagnostics.
+    /// </summary>
     private void EnsureNetworkEventLoggerExists()
     {
         if (FindFirstObjectByType<NetworkEventLogger>() == null)

@@ -17,7 +17,7 @@ namespace BossFight2D.Effects
     void Awake()
     {
       // Cache CinemachineBrain and resolve the currently active VCam
-      _brain = FindObjectOfType<CinemachineBrain>();
+      _brain = FindFirstObjectByType<CinemachineBrain>();
       if (vcam == null)
       {
         if (_brain != null && _brain.ActiveVirtualCamera != null)
@@ -27,7 +27,7 @@ namespace BossFight2D.Effects
         }
         if (vcam == null)
         {
-          vcam = FindObjectOfType<CinemachineVirtualCamera>();
+          vcam = FindFirstObjectByType<CinemachineVirtualCamera>();
         }
       }
 
@@ -64,7 +64,7 @@ namespace BossFight2D.Effects
       GameObject camGO = null;
       if (_brain == null)
       {
-        _brain = FindObjectOfType<CinemachineBrain>();
+        _brain = FindFirstObjectByType<CinemachineBrain>();
       }
       if (_brain != null && _brain.ActiveVirtualCamera != null)
       {

@@ -1,13 +1,12 @@
+using System;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using BossFight2D.Systems;
-using Unity.Netcode;
-using System.Threading.Tasks;
-using BossFight2D.Systems;
-using TMPro;
 
-
-
+/// <summary>
+/// UI driver for joining as a Relay client.
+/// </summary>
 public class JoinAsClientButton : MonoBehaviour
 {
     public Button joinAsClientButton;
@@ -22,26 +21,62 @@ public class JoinAsClientButton : MonoBehaviour
 
     private void Awake()
     {
-        connector = FindObjectOfType<RelayConnector>();
-        if (connector == null)
+        connector = RelayConnector.GetOrCreate("RelayConnector");
+        if (joinAsClientButton != null)
         {
-            var go = new GameObject("RelayConnector");
-            connector = go.AddComponent<RelayConnector>();
+            joinAsClientButton.onClick.AddListener(JoinAsClient);
         }
-        joinAsClientButton.onClick.AddListener(JoinAsClient);
-        connector.OnStatus += msg => { if (statusLabel != null) statusLabel.text = msg; };
+        else
+        {
+            Debug.LogWarning("[JoinAsClientButton] joinAsClientButton is not assigned.");
+        }
+
+        connector.OnStatus += OnRelayStatus;
+    }
+
+    private void OnDestroy()
+    {
+        if (connector != null)
+        {
+            connector.OnStatus -= OnRelayStatus;
+        }
+    }
+
+    private void OnRelayStatus(string message)
+    {
+        if (statusLabel != null) statusLabel.text = message;
     }
 
     public void JoinAsClient()
     {
-        var code = joinCodeTMPInput != null ? joinCodeTMPInput.text : (joinCodeInput != null ? joinCodeInput.text : string.Empty);
+        var code = GetJoinCode();
         if (statusLabel != null) statusLabel.text = "Joining...";
-        JoinClientAsync(code);
-
+        _ = JoinClientAsync(code);
     }
 
-    private async void JoinClientAsync(string code)
+    private string GetJoinCode()
     {
-        await connector.JoinClientWithRelayAsync(code);
+        if (joinCodeTMPInput != null) return joinCodeTMPInput.text;
+        if (joinCodeInput != null) return joinCodeInput.text;
+        return string.Empty;
+    }
+
+    private async System.Threading.Tasks.Task JoinClientAsync(string code)
+    {
+        try
+        {
+            if (connector == null)
+            {
+                Debug.LogError("[JoinAsClientButton] RelayConnector instance is missing.");
+                if (statusLabel != null) statusLabel.text = "RelayConnector missing.";
+                return;
+            }
+            await connector.JoinClientWithRelayAsync(code);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[JoinAsClientButton] Failed to join as client: {ex.Message}");
+            if (statusLabel != null) statusLabel.text = "Join failed.";
+        }
     }
 }

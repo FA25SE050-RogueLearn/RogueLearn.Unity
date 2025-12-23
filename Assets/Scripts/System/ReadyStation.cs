@@ -4,10 +4,14 @@ using Unity.Netcode;
 using BossFight2D.Quiz;
 using TMPro;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace BossFight2D.Systems
 {
     [RequireComponent(typeof(BoxCollider2D))]
+    /// <summary>
+    /// World-space ready station that gates quiz progression by letting players toggle readiness.
+    /// </summary>
     public class ReadyStation : NetworkBehaviour
     {
         [Header("Prompt Settings")]
@@ -35,7 +39,10 @@ namespace BossFight2D.Systems
         [Tooltip("Duration of the smooth ejection move (reuses PowerPlay smoothing style).")]
         [SerializeField] private float ejectLerpDuration = 0.75f;
 
-        void Awake()
+        private int _lastDisplayedReadyPlayers = -1;
+        private int _lastDisplayedTotalPlayers = -1;
+
+        private void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
             if (spriteRenderer == null)
@@ -47,7 +54,6 @@ namespace BossFight2D.Systems
 
             if (showReadyCountText)
             {
-                // Create a simple world-space TextMeshPro to show Ready count above the station
                 var go = new GameObject("ReadyCountText");
                 go.transform.SetParent(transform);
                 go.transform.localPosition = readyTextOffset;
@@ -81,16 +87,6 @@ namespace BossFight2D.Systems
             }
         }
 
-        void OnEnable()
-        {
-            BossFight2D.Systems.EventBus.AnswerSubmitted += OnAnswerSubmitted;
-        }
-
-        void OnDisable()
-        {
-            BossFight2D.Systems.EventBus.AnswerSubmitted -= OnAnswerSubmitted;
-        }
-
         private void OnReadyStateChanged(bool previousValue, bool newValue)
         {
             UpdateVisuals(newValue);
@@ -98,99 +94,90 @@ namespace BossFight2D.Systems
 
         private void UpdateVisuals(bool ready)
         {
+            UpdateStationColor(ready);
+            UpdateReadyCountTextIfNeeded(force: true);
+        }
+
+        private void OnTriggerEnter2D(Collider2D other)
+        {
+            if (!TryGetOwnedPlayerNetworkObject(other, out var netObj)) return;
+            playerInsideStatus[netObj.OwnerClientId] = true;
+            EnterStationServerRpc();
+        }
+
+        private void OnTriggerExit2D(Collider2D other)
+        {
+            if (!TryGetOwnedPlayerNetworkObject(other, out var netObj)) return;
+            playerInsideStatus[netObj.OwnerClientId] = false;
+            ExitStationServerRpc();
+        }
+
+        private void Update()
+        {
+            UpdateReadyCountTextIfNeeded(force: false);
+            TryHandleManualReadyInput();
+        }
+
+        private void UpdateStationColor(bool ready)
+        {
             if (spriteRenderer != null)
             {
                 spriteRenderer.color = ready ? readyColor : idleColor;
             }
-            if (readyText != null)
-            {
-                int totalPlayers = 0;
-                int readyPlayers = 0;
-                if (QuizManager.Instance != null)
-                {
-                    totalPlayers = QuizManager.Instance.TotalPlayers.Value;
-                    readyPlayers = QuizManager.Instance.ReadyCount.Value;
-                }
-                readyText.text = $"Ready: {readyPlayers}/{totalPlayers}";
-            }
         }
 
-        void OnTriggerEnter2D(Collider2D other)
+        private void UpdateReadyCountTextIfNeeded(bool force)
         {
-            // Accept any collider belonging to a Player object (root tagged "Player" or has PlayerController)
-            var netObj = other.GetComponentInParent<NetworkObject>();
-            if (netObj == null)
+            if (readyText == null) return;
+
+            var totalPlayers = 0;
+            var readyPlayers = 0;
+            if (QuizManager.Instance != null)
+            {
+                totalPlayers = QuizManager.Instance.TotalPlayers.Value;
+                readyPlayers = QuizManager.Instance.ReadyCount.Value;
+            }
+
+            if (!force && totalPlayers == _lastDisplayedTotalPlayers && readyPlayers == _lastDisplayedReadyPlayers)
             {
                 return;
             }
 
-            // Resolve the root GameObject so we don't require the child collider to be tagged "Player"
-            var rootGO = netObj.transform.root != null ? netObj.transform.root.gameObject : netObj.gameObject;
-            bool isPlayerRoot = (rootGO.CompareTag("Player") || rootGO.GetComponent<BossFight2D.Player.PlayerController>() != null);
-            if (!isPlayerRoot)
-            {
-                return;
-            }
-
-            // Only the local owner should toggle readiness when entering their safe zone
-            if (!netObj.IsOwner)
-            {
-                return;
-            }
-
-            // Track this player as inside
-            playerInsideStatus[netObj.OwnerClientId] = true;
-            // Manual ready: no auto-toggle on enter. Show prompt and wait for keypress.
+            _lastDisplayedTotalPlayers = totalPlayers;
+            _lastDisplayedReadyPlayers = readyPlayers;
+            readyText.text = $"Ready: {readyPlayers}/{totalPlayers}";
         }
 
-        void OnTriggerExit2D(Collider2D other)
+        private void TryHandleManualReadyInput()
         {
-            var netObj = other.GetComponentInParent<NetworkObject>();
-            if (netObj == null)
-            {
-                return;
-            }
-
-            var rootGO = netObj.transform.root != null ? netObj.transform.root.gameObject : netObj.gameObject;
-            bool isPlayerRoot = (rootGO.CompareTag("Player") || rootGO.GetComponent<BossFight2D.Player.PlayerController>() != null);
-            if (!isPlayerRoot)
-            {
-                return;
-            }
-
-            if (!netObj.IsOwner)
-            {
-                return;
-            }
-
-            // Mark this player as no longer inside
-            playerInsideStatus[netObj.OwnerClientId] = false;
-
-            // If leaving while ready, auto-unready and re-enable movement locally
-            if (isReady.Value)
-            {
-                ToggleReady(false);
-            }
+            if (!manualReady) return;
+            if (!TryGetLocalClientId(out var localClientId)) return;
+            if (!playerInsideStatus.TryGetValue(localClientId, out var isInside) || !isInside) return;
+            if (!Input.GetKeyDown(KeyCode.R)) return;
+            ToggleReady(!isReady.Value);
         }
 
-        void Update()
+        private static bool TryGetLocalClientId(out ulong clientId)
         {
-            UpdateVisuals(isReady.Value);
-            if (manualReady)
+            var nm = NetworkManager.Singleton;
+            if (nm != null && nm.LocalClient != null)
             {
-                // Check if the local player is inside
-                var localClientId = NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClient != null
-                    ? NetworkManager.Singleton.LocalClientId
-                    : 0UL;
-
-                if (playerInsideStatus.TryGetValue(localClientId, out bool isInside) && isInside)
-                {
-                    if (Input.GetKeyDown(KeyCode.R))
-                    {
-                        ToggleReady(!isReady.Value);
-                    }
-                }
+                clientId = nm.LocalClientId;
+                return true;
             }
+
+            clientId = 0UL;
+            return false;
+        }
+
+        private static bool TryGetOwnedPlayerNetworkObject(Collider2D other, out NetworkObject netObj)
+        {
+            netObj = other != null ? other.GetComponentInParent<NetworkObject>() : null;
+            if (netObj == null) return false;
+
+            var root = netObj.transform.root != null ? netObj.transform.root.gameObject : netObj.gameObject;
+            if (!(root.CompareTag("Player") || root.GetComponent<BossFight2D.Player.PlayerController>() != null)) return false;
+            return netObj.IsOwner;
         }
 
         // Server-only: recompute whether the station should be auto-ready
@@ -230,8 +217,7 @@ namespace BossFight2D.Systems
         private void EnterStationServerRpc(ServerRpcParams rpcParams = default)
         {
             insidePlayers.Add(rpcParams.Receive.SenderClientId);
-            // Auto-ready the player when they enter the station
-            if (QuizManager.Instance != null)
+            if (!manualReady && QuizManager.Instance != null)
             {
                 QuizManager.Instance.PlayerReadyChanged(rpcParams.Receive.SenderClientId, true);
             }
@@ -270,38 +256,41 @@ namespace BossFight2D.Systems
 
         private void ToggleReady(bool ready)
         {
-            var playerGO = GameObject.FindWithTag("Player");
-            var pc = playerGO != null ? playerGO.GetComponent<BossFight2D.Player.PlayerController>() : null;
-            if (pc != null && pc.IsOwner)
+            var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
+            if (lobby != null && lobby.IsSpawned)
             {
-                pc.inputEnabled = !ready;
+                lobby.SetReadyServerRpc(ready);
+                return;
             }
-            if (IsServer)
+
+            if (!IsServer) return;
+            if (QuizManager.Instance == null) return;
+            if (!TryGetLocalClientId(out var localClientId)) return;
+            QuizManager.Instance.PlayerReadyChanged(localClientId, ready);
+        }
+
+        private static void TrySetLocalPlayerInputEnabled(bool enabled)
+        {
+            var nm = NetworkManager.Singleton;
+            var localPlayerObject = nm != null && nm.LocalClient != null ? nm.LocalClient.PlayerObject : null;
+            if (localPlayerObject != null)
             {
-                if (QuizManager.Instance != null)
+                var pc = localPlayerObject.GetComponent<BossFight2D.Player.PlayerController>();
+                if (pc != null)
                 {
-                    var id = NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClient != null ? NetworkManager.Singleton.LocalClientId : 0;
-                    QuizManager.Instance.PlayerReadyChanged(id, ready);
+                    pc.inputEnabled = enabled;
+                    return;
                 }
-                if (isReady.Value != ready)
-                {
-                    isReady.Value = ready;
-                }
-                UpdateVisuals(isReady.Value);
             }
-            else
+
+            var fallback = GameObject.FindObjectsOfType<BossFight2D.Player.PlayerController>(false)
+                .FirstOrDefault(p => p != null && p.IsOwner);
+            if (fallback != null)
             {
-                var lobby = FindFirstObjectByType<BossFight2D.Network.LobbyStateManager>();
-                if (lobby != null && lobby.IsSpawned)
-                {
-                    lobby.SetReadyServerRpc(ready);
-                }
-                UpdateVisuals(ready);
+                fallback.inputEnabled = enabled;
             }
         }
 
-        // When NGO scene management is disabled, this in-scene NetworkBehaviour might not be spawned on the server.
-        // To avoid RPC errors, perform local ejection on the client and notify the server via LobbyStateManager to clear ready.
         private void EjectPlayerClientSide()
         {
             var stationCol = GetComponent<BoxCollider2D>();
@@ -349,7 +338,6 @@ namespace BossFight2D.Systems
                 : 0UL;
             playerInsideStatus[localClientId] = false;
 
-            // MVP FIX: Hide quiz panel when ejected so player can dodge attack
             var questionPanel = BossFight2D.UI.QuestionPanelController.Instance;
             if (questionPanel != null)
             {
@@ -365,13 +353,11 @@ namespace BossFight2D.Systems
 
         private void DoEjectServer(ulong? playerClientId = null)
         {
-            Debug.Log("ReadyStation: Ejecting player due to wrong answer");
-            // Turn off ready state server-side for the answering player
+            Debug.Log("[ReadyStation] Ejecting player due to wrong answer");
             ulong targetId = playerClientId.HasValue ? playerClientId.Value : (NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0);
             if (QuizManager.Instance != null)
             {
                 QuizManager.Instance.PlayerReadyChanged(targetId, false);
-                // MVP: Mark player as ejected - they must re-ready to rejoin quiz
                 QuizManager.Instance.MarkPlayerEjected(targetId);
             }
 
@@ -380,7 +366,6 @@ namespace BossFight2D.Systems
             var center = stationCol.bounds.center;
             var ext = stationCol.bounds.extents;
 
-            // Compute ejection position just outside the station bounds
             Vector3 newPos = center + Vector3.up; // fallback
             {
                 var playerGO = GameObject.FindWithTag("Player");
@@ -401,23 +386,20 @@ namespace BossFight2D.Systems
             // Update server-side inside tracking immediately to reflect ejection, independent of trigger exit timing
             insidePlayers.Remove(targetId);
 
-            // Use client-side smooth movement to match established visual style (PowerPlay return)
             var clientParams = new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { targetId } } };
             float duration = ejectLerpDuration;
             if (BossFight2D.Core.PowerPlayManager.Instance != null)
             {
-                // If available, reuse the same duration configured for Power Play smoothing
                 duration = BossFight2D.Core.PowerPlayManager.Instance.SmoothMoveDuration;
             }
             SmoothEjectClientRpc(newPos, duration, clientParams);
 
-            Debug.Log("ReadyStation: Ejection complete");
+            Debug.Log("[ReadyStation] Ejection complete");
         }
 
         [ClientRpc]
         private void SmoothEjectClientRpc(Vector3 targetPosition, float duration, ClientRpcParams clientRpcParams = default)
         {
-            // Move only the local player's object smoothly to the target position
             var localPlayerObj = NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClient != null ? NetworkManager.Singleton.LocalClient.PlayerObject : null;
             Transform t = null;
             if (localPlayerObj != null)
@@ -432,7 +414,6 @@ namespace BossFight2D.Systems
             }
             if (t == null) return;
 
-            // Prefer reusing PowerPlayManager's smoothing coroutine for consistent visuals
             var ppm = BossFight2D.Core.PowerPlayManager.Instance;
             if (ppm != null)
             {
@@ -440,9 +421,10 @@ namespace BossFight2D.Systems
             }
             else
             {
-                // Fallback local lerp if PowerPlayManager is unavailable
                 StartCoroutine(LocalLerpPlayerPosition(t, targetPosition, duration));
             }
+
+            TrySetLocalPlayerInputEnabled(true);
         }
 
         private System.Collections.IEnumerator LocalLerpPlayerPosition(Transform playerTransform, Vector3 target, float duration)
@@ -459,9 +441,6 @@ namespace BossFight2D.Systems
             playerTransform.position = target;
         }
 
-        // Allow any client (not just the owner of this in-scene NetworkObject) to toggle readiness
-        // Manual toggle removed in favor of auto-ready on station enter/exit
-
         private Sprite CreateRectSprite()
         {
             var tex = new Texture2D(8, 8, TextureFormat.RGBA32, false);
@@ -472,94 +451,11 @@ namespace BossFight2D.Systems
             tex.Apply();
             return Sprite.Create(tex, new Rect(0, 0, 8, 8), new Vector2(0.5f, 0.5f), 16f);
         }
-
-        // void OnEnable() { BossFight2D.Systems.EventBus.AnswerSubmitted += OnAnswerSubmitted; }
-        // void OnDisable() { BossFight2D.Systems.EventBus.AnswerSubmitted -= OnAnswerSubmitted; BossFight2D.Systems.EventBus.AnswerModeExited -= OnAnswerModeExited; }
-        // void Start() { BossFight2D.Systems.EventBus.AnswerModeExited += OnAnswerModeExited; }
-        // void OnAnswerSubmitted(int _, bool correct)
-        // {
-        //     Debug.Log($"ReadyStation: OnAnswerSubmitted called - correct: {correct}, playerInside: {_playerInside}, ready: {_ready}");
-        //     if (!correct && _playerInside && _ready)
-        //     {
-        //         Debug.Log("ReadyStation: Ejecting player due to wrong answer");
-        //         EjectAndCancel();
-        //     }
-        // }
-
-        // void EjectAndCancel()
-        // {
-        //     Debug.Log("ReadyStation: EjectAndCancel called");
-        //     // Cancel ready state
-        //     _ready = false; _sr.color = idleColor;
-        //     // Compute an ejection position just outside the station bounds, away from center
-        //     var stationCol = GetComponent<BoxCollider2D>();
-        //     if (stationCol == null) return;
-        //     var center = stationCol.bounds.center;
-        //     var ext = stationCol.bounds.extents;
-        //     if (player)
-        //     {
-        //         var pos = player.transform.position; Vector2 dir = (Vector2)(pos - center);
-        //         if (dir.sqrMagnitude < 0.0001f) dir = Vector2.up; dir.Normalize();
-        //         float margin = 5f;
-        //         float pushDist = Mathf.Max(ext.x, ext.y) + margin;
-        //         Vector3 newPos = center + (Vector3)(dir * pushDist);
-        //         Debug.Log($"ReadyStation: Moving player from {pos} to {newPos}");
-        //         player.parent.position = newPos;
-        //     }
-
-        //     // Update internal flags and safe zone
-        //     _playerInside = false;
-        //     UpdateSafeZone();
-        //     ShowPrompt(false);
-        //     Debug.Log("ReadyStation: Ejection complete");
-        // }
-
-        // // Public method to turn off ready state (used when the question phase is canceled)
-        // public void TurnOffReady()
-        // {
-        //     if (_ready)
-        //     {
-        //         _ready = false;
-        //         _sr.color = idleColor;
-        //         UpdateSafeZone();
-        //         Debug.Log("ReadyStation: TurnOffReady invoked; safe zone deactivated");
-        //     }
-        // }
-
-        // void OnAnswerModeExited()
-        // {
-        //     // Whenever answer mode exits (timeout, submit, or manual cancel), ensure ready is off
-        //     TurnOffReady();
-        // }
-
-        // // Force return player inside station and re-enable ready state (used after Power Play ends)
-        // public void ForceReturnPlayerAndReady()
-        // {
-        //     var col = GetComponent<BoxCollider2D>(); if (col == null) return;
-        //     Vector3 center = col.bounds.center;
-        //     if (player == null)
-        //     {
-        //         var go = GameObject.FindWithTag("Player");
-        //         if (go != null) player = go.transform;
-        //     }
-        //     if (player != null)
-        //     {
-        //         var root = player.parent != null ? player.parent : player;
-        //         root.position = center;
-        //     }
-        //     _playerInside = true;
-        //     _playerColliderCount = Mathf.Max(_playerColliderCount, 1);
-        //     _ready = true;
-        //     _sr.color = readyColor;
-        //     UpdateSafeZone();
-        //     ShowPrompt(true);
-        //     Debug.Log("ReadyStation: ForceReturnPlayerAndReady executed; player placed inside and ready ON");
-        // }
-
-        // MVP: Public methods for QuizManager to check/eject players
         /// <summary>
         /// Check if a specific player (by clientId) is inside this ready station
         /// </summary>
+        /// <param name="clientId">Target client id.</param>
+        /// <returns>True if the player is currently inside the station on the server.</returns>
         public bool IsPlayerInside(ulong clientId)
         {
             return insidePlayers.Contains(clientId);
@@ -569,6 +465,7 @@ namespace BossFight2D.Systems
         /// Eject a specific player (by clientId) from this ready station
         /// Called by QuizManager after resolution to synchronize ejection
         /// </summary>
+        /// <param name="clientId">Target client id.</param>
         public void EjectPlayer(ulong clientId)
         {
             if (!IsServer) return;

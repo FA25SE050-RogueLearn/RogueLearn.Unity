@@ -17,7 +17,6 @@ public class LobbyUI : MonoBehaviour
     [SerializeField] private Vector2 panelAnchorMin = new Vector2(0.3f, 1f);
     [SerializeField] private Vector2 panelAnchorMax = new Vector2(0.7f, 1f);
 
-    // Join Panel refs (assign in Inspector or auto-discovered by name)
     [SerializeField] private GameObject joinPanel;
     [SerializeField] private TMP_InputField joinCodeInput;
     [SerializeField] private Button joinButton;
@@ -30,66 +29,112 @@ public class LobbyUI : MonoBehaviour
     private TextMeshProUGUI _readyBtnLabel;
     private TextMeshProUGUI _joinCodeLabel;
     private LobbyStateManager _lobby;
+    private RelayConnector _relayConnector;
     private bool _localReady;
 
     private void Awake()
     {
         EnsureCanvasAndPanel();
 
-        // Auto-discover Join Panel refs if not assigned
-        if (joinPanel == null) joinPanel = GameObject.Find("JoinPanel");
-        if (joinCodeInput == null) joinCodeInput = GameObject.Find("JoinPanel/JoinCodeInput")?.GetComponent<TMP_InputField>();
-        if (joinButton == null) joinButton = GameObject.Find("JoinPanel/JoinButton")?.GetComponent<Button>();
-        if (statusLabel == null) statusLabel = GameObject.Find("JoinPanel/StatusLabel")?.GetComponent<TextMeshProUGUI>();
-
+        ResolveJoinPanelReferences();
         if (joinButton != null)
         {
-            joinButton.onClick.RemoveAllListeners();
+            joinButton.onClick.RemoveListener(OnJoinClicked);
             joinButton.onClick.AddListener(OnJoinClicked);
         }
 
-        FindLobbyManager();
+        RefreshLobbyReference();
+        BindRelayConnectorEvents();
     }
 
     private void Update()
     {
-        // Update counts label if lobby exists
-        if (_lobby != null)
+        UpdateLobbyStatusText();
+        UpdatePanelVisibility();
+    }
+
+    private void ResolveJoinPanelReferences()
+    {
+        if (joinPanel == null)
         {
-            if (_countsLabel != null)
-            {
-                _countsLabel.text = $"Ready: {_lobby.ReadyCount.Value}/{_lobby.TotalPlayers.Value}";
-            }
-            var code = _lobby.JoinCode.Value.ToString();
-            if (!string.IsNullOrWhiteSpace(code) && _joinCodeLabel != null)
-            {
-                _joinCodeLabel.text = $"Join Code: {code}";
-            }
+            joinPanel = GameObject.Find("JoinPanel");
         }
 
-        // Panel switching: show Join Panel when not connected; show Lobby Panel when connected and lobby exists
+        if (joinPanel == null) return;
+
+        if (joinCodeInput == null)
+        {
+            joinCodeInput = FindChildDeep(joinPanel.transform, "JoinCodeInput")?.GetComponent<TMP_InputField>();
+        }
+
+        if (joinButton == null)
+        {
+            joinButton = FindChildDeep(joinPanel.transform, "JoinButton")?.GetComponent<Button>();
+        }
+
+        if (statusLabel == null)
+        {
+            statusLabel = FindChildDeep(joinPanel.transform, "StatusLabel")?.GetComponent<TextMeshProUGUI>();
+        }
+    }
+
+    private static Transform FindChildDeep(Transform root, string name)
+    {
+        if (root == null) return null;
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.name == name) return t;
+        }
+        return null;
+    }
+
+    private void BindRelayConnectorEvents()
+    {
+        if (_relayConnector != null) return;
+        _relayConnector = RelayConnector.GetOrCreate("RelayConnector");
+        if (_relayConnector == null) return;
+        _relayConnector.OnJoinCodeGenerated += OnJoinCodeGenerated;
+        _relayConnector.OnStatus += OnRelayStatus;
+    }
+
+    private void UpdateLobbyStatusText()
+    {
+        if (_lobby == null) return;
+        if (_countsLabel != null)
+        {
+            _countsLabel.text = $"Ready: {_lobby.ReadyCount.Value}/{_lobby.TotalPlayers.Value}";
+        }
+
+        var code = _lobby.JoinCode.Value.ToString();
+        if (!string.IsNullOrWhiteSpace(code) && _joinCodeLabel != null)
+        {
+            _joinCodeLabel.text = $"Join Code: {code}";
+        }
+    }
+
+    private void UpdatePanelVisibility()
+    {
         var nm = NetworkManager.Singleton;
-        bool isConnected = nm != null && (nm.IsHost || nm.IsConnectedClient);
+        var isConnected = nm != null && (nm.IsHost || nm.IsConnectedClient);
         if (_lobby == null && isConnected)
         {
-            _lobby = FindFirstObjectByType<LobbyStateManager>();
+            RefreshLobbyReference();
         }
-        bool inLobby = isConnected && _lobby != null;
+
+        var inLobby = isConnected && _lobby != null;
         if (_lobbyPanel != null) _lobbyPanel.SetActive(inLobby);
         if (joinPanel != null) joinPanel.SetActive(!inLobby);
     }
 
     private void EnsureCanvasAndPanel()
     {
-        // Ensure EventSystem exists for UI input
-        if (FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+        if (FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
         {
             var es = new GameObject("EventSystem");
             es.AddComponent<UnityEngine.EventSystems.EventSystem>();
             es.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
         }
 
-        // Ensure a Canvas exists
         var canvas = GameObject.Find("Canvas");
         if (canvas == null)
         {
@@ -100,7 +145,6 @@ public class LobbyUI : MonoBehaviour
             canvas.AddComponent<UnityEngine.UI.GraphicRaycaster>();
         }
 
-        // Ensure LobbyPanel exists (create a minimal one if missing)
         var panel = GameObject.Find("LobbyPanel");
         if (panel == null)
         {
@@ -115,7 +159,6 @@ public class LobbyUI : MonoBehaviour
             rt.pivot = new Vector2(0.5f, 0.5f);
             rt.sizeDelta = new Vector2(0, 120);
 
-            // Title
             var titleGo = new GameObject("Title");
             titleGo.transform.SetParent(panel.transform, false);
             _title = titleGo.AddComponent<TextMeshProUGUI>();
@@ -128,7 +171,6 @@ public class LobbyUI : MonoBehaviour
             trt.pivot = new Vector2(0.5f, 1f);
             trt.anchoredPosition = new Vector2(0, -10);
 
-            // Counts
             var countsGo = new GameObject("Counts");
             countsGo.transform.SetParent(panel.transform, false);
             _countsLabel = countsGo.AddComponent<TextMeshProUGUI>();
@@ -141,7 +183,6 @@ public class LobbyUI : MonoBehaviour
             crt.pivot = new Vector2(0.5f, 1f);
             crt.anchoredPosition = new Vector2(0, -45);
 
-            // Ready button
             var btnGo = new GameObject("ReadyButton");
             btnGo.transform.SetParent(panel.transform, false);
             _readyButton = btnGo.AddComponent<Button>();
@@ -167,7 +208,6 @@ public class LobbyUI : MonoBehaviour
             btrt.offsetMin = Vector2.zero;
             btrt.offsetMax = Vector2.zero;
 
-            // Join code label
             var codeGo = new GameObject("JoinCode");
             codeGo.transform.SetParent(panel.transform, false);
             _joinCodeLabel = codeGo.AddComponent<TextMeshProUGUI>();
@@ -182,18 +222,15 @@ public class LobbyUI : MonoBehaviour
         }
         else
         {
-            // Bind to existing authored UI elements by name so we don't recreate duplicates
             BindExistingLobbyPanel(panel);
         }
 
-        // Hook up button handler and default visibility
         _lobbyPanel = panel;
         if (_readyButton != null)
         {
-            _readyButton.onClick.RemoveAllListeners();
+            _readyButton.onClick.RemoveListener(OnReadyClicked);
             _readyButton.onClick.AddListener(OnReadyClicked);
         }
-        // Default hidden until connected/in lobby
         if (_lobbyPanel != null)
         {
             _lobbyPanel.SetActive(false);
@@ -203,16 +240,6 @@ public class LobbyUI : MonoBehaviour
     private void BindExistingLobbyPanel(GameObject panel)
     {
         _lobbyPanel = panel;
-
-        // Helper to find children by name anywhere under the panel
-        Transform FindChildDeep(Transform root, string name)
-        {
-            foreach (var t in root.GetComponentsInChildren<Transform>(true))
-            {
-                if (t.name == name) return t;
-            }
-            return null;
-        }
 
         _title = FindChildDeep(panel.transform, "Title")?.GetComponent<TextMeshProUGUI>();
         _countsLabel = FindChildDeep(panel.transform, "Counts")?.GetComponent<TextMeshProUGUI>();
@@ -237,14 +264,9 @@ public class LobbyUI : MonoBehaviour
         }
     }
 
-    private void FindLobbyManager()
+    private void RefreshLobbyReference()
     {
         _lobby = FindFirstObjectByType<LobbyStateManager>();
-        if (RelayConnector.Instance != null)
-        {
-            RelayConnector.Instance.OnJoinCodeGenerated += OnJoinCodeGenerated;
-            RelayConnector.Instance.OnStatus += OnRelayStatus;
-        }
     }
 
     private void OnReadyClicked()
@@ -264,28 +286,37 @@ public class LobbyUI : MonoBehaviour
             Debug.LogWarning("[LobbyUI] Ready toggle ignored: LobbyStateManager is missing or not spawned yet.");
             if (_lobby == null)
             {
-                // Attempt to rediscover in case it spawned late
-                FindLobbyManager();
+                RefreshLobbyReference();
             }
         }
     }
 
     private async void OnJoinClicked()
     {
-        if (RelayConnector.Instance == null)
+        try
         {
-            Debug.LogWarning("RelayConnector.Instance not found.");
-            if (statusLabel != null) statusLabel.text = "Relay connector missing.";
-            return;
+            if (_relayConnector == null)
+            {
+                Debug.LogWarning("[LobbyUI] RelayConnector is missing.");
+                if (statusLabel != null) statusLabel.text = "Relay connector missing.";
+                return;
+            }
+
+            var code = joinCodeInput != null ? joinCodeInput.text : string.Empty;
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                if (statusLabel != null) statusLabel.text = "Enter a join code.";
+                return;
+            }
+
+            if (statusLabel != null) statusLabel.text = "Joining...";
+            await _relayConnector.JoinClientWithRelayAsync(code);
         }
-        var code = joinCodeInput != null ? joinCodeInput.text : string.Empty;
-        if (string.IsNullOrWhiteSpace(code))
+        catch (System.Exception ex)
         {
-            if (statusLabel != null) statusLabel.text = "Enter a join code.";
-            return;
+            Debug.LogError($"[LobbyUI] Failed to join client: {ex.Message}");
+            if (statusLabel != null) statusLabel.text = "Join failed.";
         }
-        if (statusLabel != null) statusLabel.text = "Joining...";
-        await RelayConnector.Instance.JoinClientWithRelayAsync(code);
     }
 
     private void OnJoinCodeGenerated(string code)
@@ -306,10 +337,20 @@ public class LobbyUI : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (RelayConnector.Instance != null)
+        if (joinButton != null)
         {
-            RelayConnector.Instance.OnJoinCodeGenerated -= OnJoinCodeGenerated;
-            RelayConnector.Instance.OnStatus -= OnRelayStatus;
+            joinButton.onClick.RemoveListener(OnJoinClicked);
+        }
+
+        if (_readyButton != null)
+        {
+            _readyButton.onClick.RemoveListener(OnReadyClicked);
+        }
+
+        if (_relayConnector != null)
+        {
+            _relayConnector.OnJoinCodeGenerated -= OnJoinCodeGenerated;
+            _relayConnector.OnStatus -= OnRelayStatus;
         }
     }
 }

@@ -320,7 +320,7 @@ MonoBehaviour:
   m_Viewport: {fileID: 1848007255}
   m_HorizontalScrollbar: {fileID: 0}
   m_VerticalScrollbar: {fileID: 0}
-  m_HorizontalScrollbarVisibility: 0
+  m_HorizontalScrollbarVisibility: 1
   m_VerticalScrollbarVisibility: 0
   m_HorizontalScrollbarSpacing: 0
   m_VerticalScrollbarSpacing: 0
@@ -4851,6 +4851,7 @@ GameObject:
   m_Component:
   - component: {fileID: 928911476}
   - component: {fileID: 928911477}
+  - component: {fileID: 928911478}
   m_Layer: 5
   m_Name: Content
   m_TagString: Untagged
@@ -4892,6 +4893,32 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_HorizontalFit: 0
   m_VerticalFit: 2
+--- !u!114 &928911478
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 928911475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 59f8146938fff824cb5fd77236b75775, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Padding:
+    m_Left: 0
+    m_Right: 0
+    m_Top: 0
+    m_Bottom: 0
+  m_ChildAlignment: 1
+  m_Spacing: 0
+  m_ChildForceExpandWidth: 1
+  m_ChildForceExpandHeight: 0
+  m_ChildControlWidth: 1
+  m_ChildControlHeight: 1
+  m_ChildScaleWidth: 0
+  m_ChildScaleHeight: 0
+  m_ReverseArrangement: 0
 --- !u!1 &943836400
 GameObject:
   m_ObjectHideFlags: 0
@@ -9369,7 +9396,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1357367061
 RectTransform:
   m_ObjectHideFlags: 0
@@ -9387,10 +9414,10 @@ RectTransform:
   - {fileID: 1523859557}
   m_Father: {fileID: 674735547}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 80}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 50, y: -40}
+  m_SizeDelta: {x: 100, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1357367062
 MonoBehaviour:
@@ -10701,7 +10728,6 @@ GameObject:
   - component: {fileID: 1565799926}
   - component: {fileID: 1565799927}
   - component: {fileID: 1565799928}
-  - component: {fileID: 1565799929}
   m_Layer: 0
   m_Name: UIManager
   m_TagString: Untagged
@@ -10779,19 +10805,6 @@ MonoBehaviour:
   SpawnWithObservers: 1
   DontDestroyWithOwner: 0
   AutoObjectParentSync: 1
---- !u!114 &1565799929
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1565799923}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e72f0716bc6f24946af63fe18ffcdd23, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  healthSlider: {fileID: 2022514985}
 --- !u!1001 &1618953212
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -11190,20 +11203,6 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 5358126388077852101, guid: e48e034d9fc027e42a8cb72237782e7f, type: 3}
   m_PrefabInstance: {fileID: 1724511206}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &1742640872
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5460955983865597296}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3245ec927659c4140ac4f8d17403cc18, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  m_HorizontalFit: 0
-  m_VerticalFit: 2
 --- !u!1001 &1761385715
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -33321,8 +33320,8 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 928911476}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 1, y: 1}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 1}
@@ -35259,7 +35258,6 @@ GameObject:
   - component: {fileID: 2155943421172403335}
   - component: {fileID: 5018174036307062075}
   - component: {fileID: 4041751222850519331}
-  - component: {fileID: 1742640872}
   m_Layer: 5
   m_Name: Question
   m_TagString: Untagged

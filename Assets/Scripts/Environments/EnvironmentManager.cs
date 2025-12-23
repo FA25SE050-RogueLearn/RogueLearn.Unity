@@ -116,7 +116,7 @@ namespace BossFight2D.Environments
             // Find global light if not assigned
             if (globalLight == null)
             {
-                globalLight = FindObjectOfType<Light2D>();
+                globalLight = FindFirstObjectByType<Light2D>();
             }
 
             if (globalLight != null)

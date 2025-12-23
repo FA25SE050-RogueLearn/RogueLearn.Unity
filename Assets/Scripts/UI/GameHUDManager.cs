@@ -31,6 +31,9 @@ namespace BossFight2D.UI
         [SerializeField] private GameObject lifelineButton;
         [SerializeField] private GameObject powerUpIndicators;
 
+        [Header("Tutorial")]
+        [SerializeField] private bool showTutorialOnStart = true;
+
         [Header("Auto-Configuration")]
         [SerializeField] private bool autoConfigureOnAwake = true;
         [SerializeField] private bool hideHUDDuringQuestions = true;

@@ -9,9 +9,6 @@ using Unity.Services.Authentication;
 using Unity.Services.Relay;
 using Unity.Networking.Transport.Relay;
 using Unity.Services.Relay.Models;
-
-
-
 namespace BossFight2D.Systems
 {
     /// <summary>
@@ -22,6 +19,19 @@ namespace BossFight2D.Systems
     public class RelayConnector : MonoBehaviour
     {
         public static RelayConnector Instance { get; private set; }
+
+        /// <summary>
+        /// Returns an existing <see cref="RelayConnector"/> if present, otherwise creates one.
+        /// </summary>
+        /// <param name="objectName">Name for the created GameObject when none exists.</param>
+        public static RelayConnector GetOrCreate(string objectName = "RelayConnector")
+        {
+            if (Instance != null) return Instance;
+            var existing = FindFirstObjectByType<RelayConnector>();
+            if (existing != null) return existing;
+            var go = new GameObject(string.IsNullOrWhiteSpace(objectName) ? "RelayConnector" : objectName);
+            return go.AddComponent<RelayConnector>();
+        }
 
         public event Action<string> OnJoinCodeGenerated;
         public event Action<string> OnStatus;
@@ -39,16 +49,19 @@ namespace BossFight2D.Systems
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
-        // This method is invoked from the WebGL page via SendMessage. The Preserve attribute prevents IL2CPP
-        // from stripping it during managed code stripping, which would otherwise cause
-        // "null function or function signature mismatch" in the browser.
+        /// <summary>
+        /// Joins a Relay session from a WebGL page via Unity SendMessage.
+        /// </summary>
+        /// <param name="code">Relay join code.</param>
+        /// <remarks>
+        /// Marked with <see cref="Preserve"/> to avoid IL2CPP stripping in WebGL.
+        /// </remarks>
         [Preserve]
         public void JoinWithCode(string code)
         {
             Debug.Log($"[WebGL] JoinWithCode: {code}");
             _pendingJoinCodeForServer = code;
             _ = JoinClientWithRelayAsync(code);
-            // Also resolve the session and fetch the pack so questions can be loaded.
             try { GameSessionClient.Instance?.BeginAutoResolveWithJoinCode(code); }
             catch (Exception e) { Debug.LogWarning($"[WebGL] JoinWithCode: failed to trigger GameSessionClient resolve: {e.Message}"); }
         }
@@ -73,10 +86,14 @@ namespace BossFight2D.Systems
             }
         }
 
+        /// <summary>
+        /// Starts a host using Unity Relay and configures <see cref="UnityTransport"/>.
+        /// </summary>
+        /// <param name="maxConnections">Maximum number of client connections allowed.</param>
         public async Task StartHostWithRelayAsync(int maxConnections = 4)
         {
             var nm = NetworkManager.Singleton;
-            if (nm == null) nm = FindObjectOfType<NetworkManager>();
+            if (nm == null) nm = FindFirstObjectByType<NetworkManager>();
             if (nm == null) { Debug.LogError("No NetworkManager found."); OnStatus?.Invoke("No NetworkManager found."); return; }
             if (nm.IsServer || nm.IsClient || nm.IsHost) { Debug.LogWarning("Network instance already running."); OnStatus?.Invoke("Network instance already running."); return; }
 
@@ -92,11 +109,7 @@ namespace BossFight2D.Systems
 
             try
             {
-                // Keep NetworkConfig consistent with clients and dedicated server: enable connection approval.
-                // For Editor/desktop hosting we approve all clients and DO create player objects.
                 nm.NetworkConfig.ConnectionApproval = true;
-                // Enable NGO scene management so the server can synchronize scene transitions
-                // (clients will follow server-initiated scene loads such as moving to Gameplay).
                 nm.NetworkConfig.EnableSceneManagement = true;
                 nm.ConnectionApprovalCallback = (request, response) =>
                 {
@@ -150,10 +163,14 @@ namespace BossFight2D.Systems
             }
         }
 
+        /// <summary>
+        /// Joins a Relay session as a client and configures <see cref="UnityTransport"/>.
+        /// </summary>
+        /// <param name="joinCode">Relay join code.</param>
         public async Task JoinClientWithRelayAsync(string joinCode)
         {
             var nm = NetworkManager.Singleton;
-            if (nm == null) nm = FindObjectOfType<NetworkManager>();
+            if (nm == null) nm = FindFirstObjectByType<NetworkManager>();
             if (nm == null) { Debug.LogError("No NetworkManager found."); OnStatus?.Invoke("No NetworkManager found."); return; }
             if (nm.IsServer || nm.IsClient || nm.IsHost) { Debug.LogWarning("Network instance already running."); OnStatus?.Invoke("Network instance already running."); return; }
             if (string.IsNullOrWhiteSpace(joinCode)) { OnStatus?.Invoke("Enter a join code."); Debug.LogWarning("Join code is empty."); return; }
@@ -162,18 +179,11 @@ namespace BossFight2D.Systems
 
             try
             {
-                // Ensure client NetworkConfig matches server expectations when joining a headless host that uses ConnectionApproval.
-                // Having mismatched NetworkConfig (e.g., server requires approval but client doesn’t) can yield
-                // "Incomplete connection request message given config" during the handshake.
                 nm.NetworkConfig.ConnectionApproval = true;
-                // Enable NGO scene management on clients to match the server and support synchronized scene loads.
                 nm.NetworkConfig.EnableSceneManagement = true;
                 nm.ConnectionApprovalCallback = (request, response) => { };
                 Debug.Log($"[RelayConnector] Client NetworkConfig: Approval={nm.NetworkConfig.ConnectionApproval}, SceneMgmt={nm.NetworkConfig.EnableSceneManagement}");
 
-                // Remember the join code so we can forward it to the server once connected,
-                // and trigger client-side resolve for visibility in the Inspector.
-                // Note: Only the server will fetch and inject the pack; the client resolve stops after obtaining session/pack_url.
                 _pendingJoinCodeForServer = joinCode.Trim();
                 try
                 {
@@ -203,7 +213,6 @@ namespace BossFight2D.Systems
                     OnStatus?.Invoke("Client started.");
                     Debug.Log("Relay Client started.");
                     WireNetworkDebugCallbacks(nm);
-                    // If we joined via a code from WebGL, forward it to the server once connected
                     nm.OnClientConnectedCallback += id =>
                     {
                         try
@@ -236,6 +245,10 @@ namespace BossFight2D.Systems
         }
 
         [Preserve]
+        /// <summary>
+        /// Sets the base URL used by <see cref="GameSessionClient"/> for the User API.
+        /// </summary>
+        /// <param name="baseUrl">The absolute base URL.</param>
         public void ConfigureUserApiBase(string baseUrl)
         {
             try
@@ -255,6 +268,10 @@ namespace BossFight2D.Systems
         }
 
         [Preserve]
+        /// <summary>
+        /// Starts a solo practice session by injecting a question pack JSON.
+        /// </summary>
+        /// <param name="packJson">Serialized question pack JSON.</param>
         public void StartSoloPractice(string packJson)
         {
             try
@@ -297,6 +314,10 @@ namespace BossFight2D.Systems
 
 
         [Preserve]
+        /// <summary>
+        /// Sets the user id used by <see cref="GameSessionClient"/> for session resolution.
+        /// </summary>
+        /// <param name="userId">User identifier string.</param>
         public void ConfigureUserId(string userId)
         {
             try

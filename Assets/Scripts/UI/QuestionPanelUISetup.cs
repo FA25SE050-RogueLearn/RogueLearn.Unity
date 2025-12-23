@@ -196,7 +196,39 @@ namespace BossFight2D.UI
         private void EnsureQuestionScrollView(TextMeshProUGUI questionTMP)
         {
             var existingScroll = questionTMP.GetComponentInParent<ScrollRect>();
-            if (existingScroll != null) return;
+
+            // If scroll view exists, ensure it has the correct components
+            if (existingScroll != null)
+            {
+                if (existingScroll.content != null)
+                {
+                    // Ensure VerticalLayoutGroup exists on Content
+                    var layoutGroupCheck = existingScroll.content.GetComponent<VerticalLayoutGroup>();
+                    if (layoutGroupCheck == null)
+                    {
+                        layoutGroupCheck = existingScroll.content.gameObject.AddComponent<VerticalLayoutGroup>();
+                        layoutGroupCheck.childControlWidth = true;
+                        layoutGroupCheck.childControlHeight = true;
+                        layoutGroupCheck.childForceExpandWidth = true;
+                        layoutGroupCheck.childForceExpandHeight = false;
+                        layoutGroupCheck.childAlignment = TextAnchor.UpperCenter;
+                        layoutGroupCheck.spacing = 0;
+                        layoutGroupCheck.padding = new RectOffset(0, 0, 0, 0);
+                        Log("  ✓ Added missing VerticalLayoutGroup to Content");
+                    }
+                }
+
+                // Ensure ContentSizeFitter is REMOVED from Question Text (it conflicts with LayoutGroup)
+                var questionFitterCheck = questionTMP.GetComponent<ContentSizeFitter>();
+                if (questionFitterCheck != null)
+                {
+                    if (Application.isPlaying) Destroy(questionFitterCheck);
+                    else DestroyImmediate(questionFitterCheck);
+                    Log("  ✓ Removed conflicting ContentSizeFitter from Question Text");
+                }
+
+                return;
+            }
 
             var questionTransform = questionTMP.transform;
             var questionRect = questionTransform as RectTransform;
@@ -250,20 +282,26 @@ namespace BossFight2D.UI
             fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            questionTransform.SetParent(contentRect, false);
-            questionRect.anchorMin = new Vector2(0f, 1f);
-            questionRect.anchorMax = new Vector2(1f, 1f);
-            questionRect.pivot = new Vector2(0.5f, 1f);
-            questionRect.anchoredPosition = Vector2.zero;
-            questionRect.sizeDelta = new Vector2(0f, questionRect.sizeDelta.y);
+            // Add VerticalLayoutGroup to Content to properly manage child size and position
+            var layoutGroup = contentGo.AddComponent<VerticalLayoutGroup>();
+            layoutGroup.childControlWidth = true;
+            layoutGroup.childControlHeight = true;
+            layoutGroup.childForceExpandWidth = true;
+            layoutGroup.childForceExpandHeight = false;
+            layoutGroup.childAlignment = TextAnchor.UpperCenter;
+            layoutGroup.spacing = 0;
+            layoutGroup.padding = new RectOffset(0, 0, 0, 0);
 
+            questionTransform.SetParent(contentRect, false);
+
+            // Reset question transform to basic values as LayoutGroup will control it
+            // Remove ContentSizeFitter if present on the question text as it conflicts with LayoutGroup
             var questionFitter = questionTransform.GetComponent<ContentSizeFitter>();
-            if (questionFitter == null)
+            if (questionFitter != null)
             {
-                questionFitter = questionTransform.gameObject.AddComponent<ContentSizeFitter>();
+                if (Application.isPlaying) Destroy(questionFitter);
+                else DestroyImmediate(questionFitter);
             }
-            questionFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-            questionFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var scrollRect = scrollRootGo.GetComponent<ScrollRect>();
             scrollRect.viewport = viewportRect;
